@@ -1,0 +1,11 @@
+{
+  "tabs": [
+    { "name": "Team", "query": "repo:owner/name" },
+    { "name": "Needs my eyes", "query": "review-requested:@me draft:false" }
+  ],
+  "prompts": [
+    { "label": "Review", "ask": "Please review this pull request. List what concerns you, most important first, each with the lines involved." },
+    { "label": "Diagram", "ask": "Please draw this pull request's change: a diagram of the parts and the flow involved (Mermaid or text), with a short explanation." },
+    { "label": "Security", "ask": "Look for security problems in this pull request: input handling, authorization, secrets, injection." }
+  ]
+}

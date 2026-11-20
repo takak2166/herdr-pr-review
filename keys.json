@@ -1,0 +1,17 @@
+{
+  "layout:pr-review": {
+    "f12": "pr-review.definition",
+    "shift-f12": "pr-review.references",
+    "ctrl--": "pr-review.back",
+    "ctrl-shift--": "pr-review.forward",
+    "ctrl-f": "pr-review.find",
+    "cmd-shift-c": "pr-review.code"
+  },
+  "terminal": {
+    "f12": "terminal",
+    "shift-f12": "terminal",
+    "ctrl--": "terminal",
+    "ctrl-shift--": "terminal",
+    "ctrl-f": "terminal"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "id": "root",
+  "type": "row",
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "children": [
+    {
+      "id": "review-main",
+      "type": "block",
+      "min": 600,
+      "background": "canvas",
+      "content": {
+        "mod": "pr-review"
+      }
+    },
+    {
+      "id": "review-chat",
+      "type": "column",
+      "hidden": true,
+      "size": {
+        "px": 560
+      },
+      "min": 360,
+      "max": 1100,
+      "children": [
+        {
+          "id": "review-chat-head",
+          "type": "block",
+          "size": {
+            "px": 34
+          },
+          "content": {
+            "mod": "pr-review",
+            "props": {
+              "role": "chat-head"
+            }
+          }
+        },
+        {
+          "id": "review-chat-tab",
+          "type": "block",
+          "background": "background",
+          "content": {
+            "tab": "active",
+            "pane": {
+              "gap": 6
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

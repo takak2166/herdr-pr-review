@@ -13,13 +13,27 @@
 
 ## 入れ方
 
-Herdr のエージェントに次のように頼むと、手順（ファイルのコピーとキー設定のマージ）に沿って入れてくれます。
+Herdr のエージェントに、バージョン（git のタグ。[CHANGELOG.md](CHANGELOG.md) を参照）を指定して次のように頼むと、手順（ファイルのコピーとキー設定のマージ）に沿って入れてくれます。
 
 ```
-github.com/takak2166/herdr-pr-review のレイアウトを入れて
+github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.1.0 で入れて
 ```
 
-手で入れる場合は、`layouts/pr-review.json` と `mods/pr-review/` を `~/.config/herdr-app/` の同じ場所に写し、`keys.json` を自分の `keys.json` にマージしてから、`ctrl-shift-l`（または `layout.switch {name: "pr-review"}`）で切り替えます。
+手で入れる場合は、そのタグの `layouts/pr-review.json` と `mods/pr-review/` を `~/.config/herdr-app/` の同じ場所に写し、`keys.json` を自分の `keys.json` にマージしてから、`ctrl-shift-l`（または `layout.switch {name: "pr-review"}`）で切り替えます。
+
+## 更新のしかた
+
+Herdr にはパッケージ管理の仕組みがありません。レイアウトは `~/.config/herdr-app/` に置いたファイルにすぎず、どのバージョンを入れたかはどこにも記録されません。入れたときのタグを控えておいてください（写したバージョンの `CHANGELOG.md` でも分かります）。
+
+Herdr の手順では、エージェントは同じ名前があると上書きせずに名前を変えて入れます。そのため、もう一度「入れて」と頼むと別物（`pr-review-2`）ができてしまいます。更新であることをはっきり伝えてください。
+
+```
+github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.2.0 に更新して。
+mods/pr-review/ と layouts/pr-review.json はその場で置き換えてよい（上書きして構わない）。
+keys.json に新しいキーがあればマージして。
+```
+
+手で更新する場合は、`mods/pr-review/` と `layouts/pr-review.json` を新しいバージョンのものに置き換え、`keys.json` の新しい項目をマージします。下書き・Viewed の印（GitHub 側）・ペインの幅・言語の設定は、これらのファイルの外にあるので残ります。`data/pr-review/config.json` はあなたのファイルで、更新では触りません。
 
 ## 前提
 

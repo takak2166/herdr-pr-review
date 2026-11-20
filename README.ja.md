@@ -72,3 +72,7 @@ keys.json に新しいキーがあればマージして。
 絞り込みの欄は、題・番号・リポジトリ・作者で探します。`review:required` / `approved` / `changes`、`is:draft`、`ci:failing` / `passing`、`author:<名前>`、`repo:<名前>` も使えます。
 
 作りの詳細は [RECIPE.md](RECIPE.md)（英語）にあります。
+
+## 貢献とライセンス
+
+issue や PR を歓迎します。手順は [CONTRIBUTING.md](CONTRIBUTING.md)（英語）にあります。ライセンスは [MIT](LICENSE) です。

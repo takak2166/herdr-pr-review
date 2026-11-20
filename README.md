@@ -72,3 +72,7 @@ A tab's query is a GitHub search (`is:pr is:open` is added). Your prompts replac
 The filter box matches title, number, repository and author, and understands `review:required` / `approved` / `changes`, `is:draft`, `ci:failing` / `passing`, `author:<login>`, `repo:<name>`.
 
 How it is built: [RECIPE.md](RECIPE.md).
+
+## Contributing and license
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). [MIT License](LICENSE).

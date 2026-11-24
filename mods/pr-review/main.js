@@ -16,6 +16,7 @@ import { parseDiff, treeOrder } from "./diff.js";
 import { L, setLang, currentLang, macLang } from "./i18n.js";
 import { languageOf, highlightLine, sliceSegs } from "./highlight.js";
 import { fileAt, definitions, references, goplsReferences, blameLine, wordAt } from "./code.js";
+import { previewKind, ensurePreview, togglePreview, previewPane, pickLine } from "./preview.js";
 
 // The lists are asked for again this often.
 const LIST_MS = 300000;
@@ -259,6 +260,8 @@ export default class PrReview extends View {
     this.view = "diff";
     this.code = null;
     this.codeBusy = false;
+    // The preview of a Markdown file (preview.js).
+    this.preview = null;
     this.codeNote = null;
     this.back = [];
     this.forward = [];
@@ -371,6 +374,9 @@ export default class PrReview extends View {
     else if (c === "config") this.readConfig(cx);
     else if (c === "viewed" && this.current()) this.toggleViewed(this.current(), cx);
     else if (c === "split") this.setSplit(!this.split);
+    else if (c === "preview") { if (previewKind(this.current())) { togglePreview(this); this.compose = null; } }
+    // `preview-line-12`: in the preview, what line 12 of the file shows, as if it were pressed.
+    else if (c.startsWith("preview-line-")) pickLine(this, Number(c.slice(13)));
     else if (c === "copy") this.copySel(cx);
     else if (c === "references") this.goReferences(cx);
     // `search-<text>`: as typing <text> in the search box (for scripts).
@@ -1852,11 +1858,12 @@ export default class PrReview extends View {
           .child(div().id("mark-clear").w(20).h(20).flex().items_center().justify_center().rounded(R.sm).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(L("ハイライトを消す", "Clear the highlight"))
             .on_click((_e, cx) => { this.mark = null; cx.notify(); }).child(ico("x", 12, t.muted))));
       })
-      .when(!this.mark && !this.selRange(), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.rows.length <= PLAIN_MAX ? L("名前をクリックでハイライト・ドラッグで文字を選択・+ でコメント（ドラッグで複数行）", "Click a name to highlight · drag to select · + to comment (drag for several lines)") : L("名前をクリックでハイライト・行頭の + でコメント", "Click a name to highlight · + at a line's start to comment"))))
+      .when(this.view !== "preview" && !this.mark && !this.selRange(), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.rows.length <= PLAIN_MAX ? L("名前をクリックでハイライト・ドラッグで文字を選択・+ でコメント（ドラッグで複数行）", "Click a name to highlight · drag to select · + to comment (drag for several lines)") : L("名前をクリックでハイライト・行頭の + でコメント", "Click a name to highlight · + at a line's start to comment"))))
       .child(this.selChip(t))
-      .when(this.oneSided(f), (el) => el.child(div().id("file-split-off").flex_none().px(8).h(22).flex().items_center().text_size(12).text_color(t.dim)
+      .when(this.view !== "preview" && this.oneSided(f), (el) => el.child(div().id("file-split-off").flex_none().px(8).h(22).flex().items_center().text_size(12).text_color(t.dim)
         .tooltip(L(`${f.added ? "追加されたファイル" : f.deleted ? "削除されたファイル" : f.del === 0 ? "追加だけの変更" : "削除だけの変更"}は片側しかないので、1 列で表示します。`, `${f.added ? "An added file" : f.deleted ? "A deleted file" : f.del === 0 ? "A change with only additions" : "A change with only deletions"} has one side, so it is shown unified.`)).child(L("1 列で表示", "Unified"))))
-      .when(!this.oneSided(f), (el) => el.child(button("file-split", this.split ? L("1 列にする", "Unified") : L("左右に並べる", "Split"), L("変更前と変更後を、左右に並べるか 1 列で見るか", "See before and after side by side, or unified"), this.split, (_e, cx) => { this.setSplit(!this.split); cx.notify(); })))
+      .when(Boolean(previewKind(f)), (el) => el.child(button("file-preview", this.view === "preview" ? L("差分に戻る", "Back to diff") : L("プレビュー", "Preview"), L("Markdown を表示して、表示の上でコメントする", "Show the Markdown and comment on what it shows"), this.view === "preview", (_e, cx) => { togglePreview(this); this.compose = null; cx.notify(); })))
+      .when(this.view !== "preview" && !this.oneSided(f), (el) => el.child(button("file-split", this.split ? L("1 列にする", "Unified") : L("左右に並べる", "Split"), L("変更前と変更後を、左右に並べるか 1 列で見るか", "See before and after side by side, or unified"), this.split, (_e, cx) => { this.setSplit(!this.split); cx.notify(); })))
       .child(h_flex().id("file-viewed").flex_none().h(22).px(8).gap(6).items_center().rounded(4).cursor_pointer().hover((s) => s.bg(t.hover))
         .tooltip(viewed ? L("確認済みの印を外す（GitHub の Viewed）", "Unmark as viewed (GitHub's Viewed)") : L("確認済みにして、次のファイルへ（GitHub の Viewed）", "Mark as viewed and go to the next file (GitHub's Viewed)"))
         .on_click((_e, cx) => { this.toggleViewed(f, cx); cx.notify(); })
@@ -1930,7 +1937,7 @@ export default class PrReview extends View {
     const tagOf = () => LABEL.exec(this.editor.value())?.[1] ?? null;
     return v_flex().h(186).flex_none().px(12).py(8).gap(6).border_t(1).border_color(t.accent).bg(t.surface)
       .when(Boolean(this.composeNote), (el) => el.child(div().flex_none().text_size(11).text_color(t.blocked).child(this.composeNote)))
-      .when(!this.composeNote && !c.reply && c.index == null, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(L("+ をドラッグするか、Shift を押しながら別の行の + を押すと、複数行へのコメントになります。", "Drag a + across lines, or Shift-click another line's +, to comment on several lines."))))
+      .when(!this.composeNote && !c.reply && c.index == null && this.view !== "preview", (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(L("+ をドラッグするか、Shift を押しながら別の行の + を押すと、複数行へのコメントになります。", "Drag a + across lines, or Shift-click another line's +, to comment on several lines."))))
       .child(h_flex().gap(6).items_center().text_size(11)
         .child(div().flex_none().text_color(t.muted).child(`${c.reply ? L(`${c.to ?? ""} への返信・`, `Reply to ${c.to ?? ""} · `) : ""}${c.path.split("/").pop()}:${c.startLine != null ? `${c.startLine}–${c.line}` : c.line}${c.side === "LEFT" ? L("（削除側）", " (removed side)") : ""}`))
         .child(div().w(8))
@@ -2041,7 +2048,8 @@ export default class PrReview extends View {
         .when(this.view !== "code", (e) => e.child(v_flex().flex_1().min_w(0).min_h(0)
           .when(Boolean(this.current()), (el) => el.child(this.fileBar(t)))
           .when(this.findOpen && Boolean(this.current()), (el) => el.child(this.findBar(t)))
-          .child(div().id("pr-diff-pane").flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
+          .when(this.view === "preview", (el) => el.child(previewPane(this, t)))
+          .when(this.view !== "preview", (el) => el.child(div().id("pr-diff-pane").flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
             .on_size_change((size, cx) => {
               if (Math.abs((this.paneW ?? 0) - size.width) < 8) return;
               this.paneW = size.width;
@@ -2110,7 +2118,7 @@ export default class PrReview extends View {
                 .track_scroll(this.diffScroll).size_full()))))
             .child(Scrollbar.vertical("pr-diff").viewport_from_layout().absolute().inset_0())
             .when(this.diffBusy, (e) => e.child(div().absolute().top(10).left(14).text_color(t.dim).child(L("差分を読み込み中…", "Loading the diff…"))))
-            .when(!this.diffBusy && this.rows.length === 0 && !this.note, (e) => e.child(div().absolute().top(10).left(14).text_color(t.dim).child(L("この PR には表示できる差分がありません。", "This pull request has no diff to show.")))))
+            .when(!this.diffBusy && this.rows.length === 0 && !this.note, (e) => e.child(div().absolute().top(10).left(14).text_color(t.dim).child(L("この PR には表示できる差分がありません。", "This pull request has no diff to show."))))))
           .when(Boolean(this.compose), (e) => e.child(this.composer(t)))))
         .when(Boolean(this.side), (e) => e.child(this.grip(t, "side", -1)).child(v_flex().w(this.widths.side).flex_none().min_h(0).bg(t.chrome)
           .child(h_flex().h(28).flex_none().px(12).items_center().text_size(11).font_medium().text_color(t.dim).border_b(1).border_color(t.border)
@@ -2149,9 +2157,10 @@ export default class PrReview extends View {
     }
   }
 
-  draw(_cx) {
+  draw(cx) {
     const t = theme();
     if (this.role === "chat-head") return this.chatHead(t);
+    ensurePreview(this, cx);
     return div().id("review-root").flex().flex_row().size_full().min_h(0).bg(t.canvas).text_color(t.foreground)
       // Cmd+C copies the selected text while the screen itself has the keyboard (pressing on the
       // text gives it); a key pressed in an input travels up here too, and is left to the input.

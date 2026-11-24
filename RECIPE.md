@@ -74,6 +74,18 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   again goes to the next use. Ctrl+- / Ctrl+Shift+- go back and forward, to the diff too. The current
   line shows its last change (author, age, `this PR`, summary; click opens the commit). Ctrl+F
   searches the file shown, Enter / Shift+Enter, Esc. Jumps put the line in the middle.
+- **Preview** (Markdown files only; `Preview` in the file bar, or the command `pr-review.preview`):
+  the file at the head commit, drawn block by block (headings, paragraphs, list items with their
+  nesting, tables, quotes, code fences, front matter as YAML). Pressing a block opens the comment box
+  on its lines: all of them when they are one stretch of one hunk, else the first line in the diff;
+  a block outside the diff says it can't take a comment. Drafts and GitHub's threads on the file show
+  as a count on their block (orange with a thread, gray for drafts only) and in a column on the right
+  (`Reply` on threads, `Edit` on drafts). `pr-review.preview-line-<n>` presses the block holding line n.
+- **Mermaid** in the preview: each ```` ```mermaid ```` block is laid out by Mermaid in headless Chrome
+  and shown as SVG on white, shrunk to fit; code and a reason show while it draws or when it fails.
+  A click on the diagram enlarges it over the preview at 1x to 4x (sizes that would exceed 3600px
+  are not offered), dragged or scrolled about and kept 24px inside the edges; `この図にコメント`
+  picks its block, `閉じる` closes it.
 - **Ask Claude**: the question chips (`Review`, `Diagram`, or yours from `config.json`) and an input.
   The first question opens a tab `<repo>#<n> review` running `claude` in the clone (read-only
   instructions in the first message) and shows the right pane; with a session already there, the pane
@@ -92,13 +104,18 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   (unified diff → rows; quoted and non-ASCII paths; tree order, generated files last), `highlight.js`
   (a small per-language tokenizer), `code.js` (files, definitions, uses, blame from the local clone
   with `git show` / `git grep` / `git blame`), `gopls-refs.sh` (gopls on an extracted copy of the
-  commit, plus the gRPC bridge).
+  commit, plus the gRPC bridge), `preview.js` (the Markdown preview: blocks with their lines, the
+  comment column, Mermaid and the enlarged view), `render-mermaid.mjs` (Node: starts Chrome headless
+  with a throwaway profile, drives it over the DevTools protocol, writes `<key>.svg` and `<key>.json`).
+- `data/pr-review/mermaid/mermaid.min.js` (not in the repository; installed from npm) and
+  `data/pr-review/mermaid/cache/` for drawn diagrams.
 - herdr: `exec`, `hc`, `run` (`layout.show` / `layout.hide`, `tab.new`, `tab.select`, `tab.close`),
   `spaces`, `panes`, `theme`, `settings` (font and zoom), `notify`, `nextCommand`, `appHome`,
   `readTextFile`, `home`.
 - `keys.json`: the section `layout:pr-review` and terminal pass-through for the same keys.
 - `data/pr-review/config.json` (optional): `tabs` and `prompts`.
-- Programs: `gh` (logged in), `git`, `defaults`, optionally `gopls` and `go`, `claude`.
+- Programs: `gh` (logged in), `git`, `defaults`, optionally `gopls` and `go`, `claude`, and for
+  Mermaid `node` (22+, for its WebSocket) and Google Chrome.
 
 ## Watch out
 
@@ -114,6 +131,13 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - Cut lines over 1000 columns before untabbing; minified files otherwise stall the regex.
 - An exception in the command loop ends it silently: catch per command and notify. Two methods with
   one name in a class: the later wins without a word.
+- Mermaid puts labels in HTML (`foreignObject`), which Herdr's SVG renderer doesn't draw: turn
+  `htmlLabels` off (top level and `flowchart`) so labels are SVG text, and name a Japanese font.
+- Mermaid fits a diagram to the page's width: set the SVG's width and height from its viewBox.
+- Herdr keeps an image it loaded by its path: a change in how diagrams are drawn needs new file
+  names (a version in the key). An image is one GPU texture: very large ones break, so cap the zoom.
+- An image in a flex column stretches: give its box an explicit width and height.
+- Sizes from `on_size_change` are zoomed as pointer positions are: divide them too.
 - The app's PATH may lack Go's tools: `gopls-refs.sh` borrows the login shell's PATH.
 - Assumes macOS (`defaults`, `dscl`, `~/Library/Caches/herdr-pr-review` for gopls trees) and clones
   at `~/ghq/github.com/<owner>/<repo>`. gopls trees are whole checkouts (the five most recent kept);

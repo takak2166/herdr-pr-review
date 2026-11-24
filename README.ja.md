@@ -5,6 +5,7 @@
 - 自分の PR とレビュー依頼を、次にやることで分けて並べる（レビューする・対応する・返事待ち・ウォッチ）
 - 差分をフォルダの木からファイルごとに、シンタックスハイライト付きで読む（1 列・左右）。GitHub の Viewed の印も使える
 - 行・複数行へのコメントと返信を手元で下書きして、まとめて 1 つのレビューとして送る
+- Markdown のファイルをプレビューで読み、ブロック（見出し・段落・リストの項目・表・引用・コード）を押してその行にコメントする。Mermaid の図は SVG で描き、クリックで拡大・ドラッグで移動できる
 - PR の head のコードを開き、F12 で定義、Shift+F12 で参照（Go は gopls で型を見て調べ、gRPC のサービスをまたいだ呼び出しも出す）、行の blame、Ctrl+F で検索、文字の選択
 - 右のペインで、その PR について Claude Code に聞く
 - 日本語と英語（Mac の言語に合わせる。切り替えも可）
@@ -16,7 +17,7 @@
 Herdr のエージェントに、バージョン（git のタグ。[CHANGELOG.md](CHANGELOG.md) を参照）を指定して次のように頼むと、手順（ファイルのコピーとキー設定のマージ）に沿って入れてくれます。
 
 ```
-github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.1.0 で入れて
+github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.2.0 で入れて
 ```
 
 手で入れる場合は、そのタグの `layouts/pr-review.json` と `mods/pr-review/` を `~/.config/herdr-app/` の同じ場所に写し、`keys.json` を自分の `keys.json` にマージしてから、`ctrl-shift-l`（または `layout.switch {name: "pr-review"}`）で切り替えます。
@@ -42,6 +43,12 @@ keys.json に新しいキーがあればマージして。
 - レビューするリポジトリのクローンが `~/ghq/github.com/<owner>/<repo>` にあること（コード表示・定義・参照・blame に使います。差分だけならなくても動きます）
 - 任意: `gopls` と `go`（Go の参照を型で調べます。なければ単語の検索になります）
 - 右のペインには `claude`（Claude Code）
+- 任意: Google Chrome、Node.js 22 以上、Mermaid 本体（Markdown のプレビューで Mermaid の図を描くのに使います。なければ図のコードをそのまま出します）。Mermaid は npm から一度だけ取ってきます。図は手元で描き、どこにも送りません:
+
+  ```sh
+  d=~/.config/herdr-app/data/pr-review/mermaid; mkdir -p "$d" && cd "$(mktemp -d)" \
+    && npm install --no-audit --no-fund mermaid@11 && cp node_modules/mermaid/dist/mermaid.min.js "$d/"
+  ```
 
 ## キー
 

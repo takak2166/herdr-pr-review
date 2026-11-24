@@ -3,6 +3,14 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## v0.2.0 — 2026-11-24
+
+- Markdown preview: `Preview` in the file bar draws a Markdown file block by block. Pressing a
+  block opens a comment on its lines, drafted and submitted with the review like any other; the
+  file's threads and drafts show on their blocks and in a column on the right.
+- Mermaid diagrams in the preview, drawn locally as SVG with headless Chrome and a copy of Mermaid
+  (optional; see Requirements). A click enlarges a diagram (1x to 4x), which can be dragged about.
+
 ## v0.1.0 — 2026-11-20
 
 The first release.

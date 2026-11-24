@@ -5,6 +5,7 @@ A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本�
 - Your pull requests and review requests, grouped by what to do next: To review, To fix, Waiting, Watching
 - The diff file by file, from a folder tree, with syntax colors (unified or split), and GitHub's Viewed marks
 - Line and multi-line comments and replies, drafted locally and submitted as one review
+- A preview of Markdown files: press a block (heading, paragraph, list item, table, quote, code) to comment on its lines; Mermaid diagrams drawn as SVG, enlarged with a click and dragged about
 - A code view of the head commit: go to definition (F12), find uses (Shift+F12; for Go by type with gopls, across gRPC services), blame of the current line, search (Ctrl+F), text selection
 - Ask Claude Code about the pull request in a pane on the right
 - English and Japanese (follows the Mac's language; switchable)
@@ -16,7 +17,7 @@ A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本�
 Ask Herdr's agent, naming a version (a git tag; see [CHANGELOG.md](CHANGELOG.md)):
 
 ```
-Add the layout from github.com/takak2166/herdr-pr-review at tag v0.1.0
+Add the layout from github.com/takak2166/herdr-pr-review at tag v0.2.0
 ```
 
 It copies the files and merges the keys as Herdr's guide says. By hand: copy `layouts/pr-review.json` and `mods/pr-review/` from the tag to the same places under `~/.config/herdr-app/`, merge `keys.json` into yours, then switch with `ctrl-shift-l` (or `layout.switch {name: "pr-review"}`).
@@ -42,6 +43,12 @@ By hand: replace `mods/pr-review/` and `layouts/pr-review.json` with the new ver
 - A clone of each repository at `~/ghq/github.com/<owner>/<repo>` for the code view, definitions, uses and blame (the diff works without one)
 - Optional: `gopls` and `go`, to find Go uses by type (a word search is used otherwise)
 - `claude` (Claude Code) for the right pane
+- Optional: Google Chrome, Node.js 22 or later, and a copy of Mermaid, to draw Mermaid diagrams in the Markdown preview (without them the diagram's code is shown). Mermaid is fetched once from npm; diagrams are drawn locally and sent nowhere:
+
+  ```sh
+  d=~/.config/herdr-app/data/pr-review/mermaid; mkdir -p "$d" && cd "$(mktemp -d)" \
+    && npm install --no-audit --no-fund mermaid@11 && cp node_modules/mermaid/dist/mermaid.min.js "$d/"
+  ```
 
 ## Keys
 

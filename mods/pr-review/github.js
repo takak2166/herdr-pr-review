@@ -82,12 +82,17 @@ export async function searchPrs(query, limit = 100) {
 /** The parts of one pull request the list doesn't carry: its text, commits, reviews,
  *  conversation, checks, and the comments already on its lines. */
 export async function prDetail(pr) {
-  const [view, inline] = await Promise.all([
+  const [owner, name] = pr.repo.split("/");
+  const [view, inline, found] = await Promise.all([
     gh(["pr", "view", pr.url, "--json", "body,commits,reviews,comments,statusCheckRollup,mergeable,mergeStateStatus"]),
     gh(["api", "--paginate", `repos/${pr.repo}/pulls/${pr.number}/comments?per_page=100`, "--jq",
       ".[] | {id, reply: .in_reply_to_id, path, line: (.line // .original_line), side: (.side // \"RIGHT\"), outdated: (.line == null), user: .user.login, body, at: .created_at}"]),
+    // Whether each thread is resolved: only GitHub's GraphQL API says so (the first 100 threads).
+    gh(["api", "graphql", "-f", `query=${THREADS}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${pr.number}`]),
   ]);
   const d = JSON.parse(view);
+  const resolved = new Set();
+  for (const t of JSON.parse(found).data.repository.pullRequest.reviewThreads.nodes) if (t.isResolved) for (const c of t.comments.nodes) resolved.add(c.databaseId);
   return {
     body: d.body ?? "",
     mergeable: d.mergeable ?? null,
@@ -96,7 +101,7 @@ export async function prDetail(pr) {
     reviews: (d.reviews ?? []).filter((r) => r.state !== "PENDING").map((r) => ({ user: r.author?.login ?? "", state: r.state, body: r.body ?? "", at: r.submittedAt })),
     comments: (d.comments ?? []).map((c) => ({ user: c.author?.login ?? "", body: c.body ?? "", at: c.createdAt })),
     checks: (d.statusCheckRollup ?? []).map((c) => ({ name: c.name ?? c.context ?? "", state: c.conclusion || c.state || c.status || "" })),
-    threads: inline.split("\n").filter(Boolean).map((line) => JSON.parse(line)),
+    threads: inline.split("\n").filter(Boolean).map((line) => JSON.parse(line)).map((c) => ({ ...c, resolved: resolved.has(c.id) })),
   };
 }
 
@@ -151,7 +156,7 @@ export async function setViewed(prId, path, on) {
 
 const THREADS = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    reviewThreads(first: 100) { nodes { id comments(first: 100) { nodes { databaseId } } } } } } }`;
+    reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { databaseId } } } } } } }`;
 const REPLY = `mutation($review: ID!, $thread: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: { pullRequestReviewId: $review, pullRequestReviewThreadId: $thread, body: $body }) { comment { id } } }`;
 

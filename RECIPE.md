@@ -3,9 +3,9 @@
 A whole window for reviewing GitHub pull requests without leaving Herdr. Your review requests and
 your own pull requests are grouped by what to do next; one pull request's diff is read file by
 file from a folder tree, with syntax colors and GitHub's Viewed marks; line comments and replies are
-drafted locally and submitted as one review; a code view of the head commit has go to definition
+drafted locally and submitted as one review, resolved threads folded until clicked; a code view of the head commit has go to definition
 (F12), find uses (Shift+F12; for Go by type through gopls, and across gRPC services), blame of the
-current line, search (Ctrl+F) and text selection; and a Claude Code session about the pull request
+current line, search (Cmd+F) and text selection, and a second column with another file (Cmd+click); and a Claude Code session about the pull request
 opens in a pane on the right. In English or Japanese.
 
 ![PR Review](preview.png)
@@ -62,18 +62,23 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - **Viewed** is GitHub's own mark (`viewerViewedState`, `markFileAsViewed` / `unmarkFileAsViewed`),
   read when the pull request opens; marking the shown file goes on to the next one not viewed.
   The mark shows at once and is taken back if GitHub refuses it.
-- **Comments**: drafts are kept per pull request in localStorage until sent. Labels `ask` / `imo` /
+- **Comments**: drafts are kept per pull request in localStorage until sent. Resolved threads
+  (`isResolved` from GraphQL) are folded to one `Resolved` row; a click opens or folds them again
+  (one with a draft reply stays open), in the diff and in the preview's column. Labels `ask` / `imo` /
   `nits` / `tsubuyaki` insert a shields.io badge. `Submit review` sends one review (Comment or
   Approve) after a second press; with replies it builds a pending review, adds the replies, then
   submits it (deleting the pending review if a step fails).
 - **Code view** (`Code`, Cmd+Shift+C at the same line): F12 goes to the marked name's definition
-  (several candidates listed above). Shift+F12 lists the uses at once by word (strings and comments
+  (several candidates listed above); for Go, gopls answers by type first and the word search of `git grep -p` (a function's own variables left out) is the fallback. Shift+F12 lists the uses at once by word (strings and comments
   left out), then for Go replaces them with gopls' answer by type; when the name is an RPC
   (`rpc Name(` in `proto/src/<svc>/`), the calls through that service's generated gRPC client from
   other services (`gRPC ← <service>`) and the server method they land in (`impl`) are added. Pressing
   again goes to the next use. Ctrl+- / Ctrl+Shift+- go back and forward, to the diff too. The current
-  line shows its last change (author, age, `this PR`, summary; click opens the commit). Ctrl+F
-  searches the file shown, Enter / Shift+Enter, Esc. Jumps put the line in the middle.
+  line shows its last change (author, age, `this PR`, summary; click opens the commit). Cmd+F (or
+  Ctrl+F) searches the file shown, Enter / Shift+Enter, Esc. Jumps put the line in the middle.
+  Cmd+click a file in the tree opens it in a second column on the right (an `x` in its header closes
+  it). Each column keeps its own file, history, mark, selection and search; F12 and Shift+F12 open
+  in the column where they were pressed.
 - **Preview** (Markdown files only; `Preview` in the file bar, or the command `pr-review.preview`):
   the file at the head commit, drawn block by block (headings, paragraphs, list items with their
   nesting, tables, quotes, code fences, front matter as YAML). Pressing a block opens the comment box
@@ -104,7 +109,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   (unified diff → rows; quoted and non-ASCII paths; tree order, generated files last), `highlight.js`
   (a small per-language tokenizer), `code.js` (files, definitions, uses, blame from the local clone
   with `git show` / `git grep` / `git blame`), `gopls-refs.sh` (gopls on an extracted copy of the
-  commit, plus the gRPC bridge), `preview.js` (the Markdown preview: blocks with their lines, the
+  commit: definitions and uses, plus the gRPC bridge), `lsp/main.go` (gopls-lsp: a small server, standard
+  library only, that keeps up to three LSP sessions open through the shared gopls daemon and exits
+  after 30 idle minutes), `preview.js` (the Markdown preview: blocks with their lines, the
   comment column, Mermaid and the enlarged view), `render-mermaid.mjs` (Node: starts Chrome headless
   with a throwaway profile, drives it over the DevTools protocol, writes `<key>.svg` and `<key>.json`).
 - `data/pr-review/mermaid/mermaid.min.js` (not in the repository; installed from npm) and
@@ -125,7 +132,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   so it follows the language.
 - Virtual list rows take no handlers and repaint on hover only when the list re-renders: files up to
   1500 rows are drawn whole (per-row hover, drag, selection); longer ones use a virtual list without
-  selection and with the `+` shown only near the gutter.
+  selection and with the `+` shown only near the gutter. A handler on anything inside a
+  row (the blame tag too) makes the whole list draw nothing: draw plain text there.
 - `TextEncoder` does not exist in this runtime: decode git's octal-quoted paths via percent-encoding
   and `decodeURIComponent`.
 - Cut lines over 1000 columns before untabbing; minified files otherwise stall the regex.
@@ -141,7 +149,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - The app's PATH may lack Go's tools: `gopls-refs.sh` borrows the login shell's PATH.
 - Assumes macOS (`defaults`, `dscl`, `~/Library/Caches/herdr-pr-review` for gopls trees) and clones
   at `~/ghq/github.com/<owner>/<repo>`. gopls trees are whole checkouts (the five most recent kept);
-  one `gopls serve` keeps running on a socket in the cache folder.
+  one `gopls serve` keeps running on a socket in the cache folder, and gopls-lsp is built into
+  `bin/gopls-lsp-<hash>` there with `go build` (again when its source changes). A unix socket path
+  may be at most 104 bytes on macOS: keep the cache folder's path short.
 
 ## Done when
 
@@ -154,5 +164,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - A draft sent with `Submit review` appears on GitHub as one review.
 - F12 on a marked name opens its definition; Ctrl+- comes back to the diff.
 - Shift+F12 on a Go RPC handler lists the calls from other services with `gRPC ←`.
-- Ctrl+F marks matches and Enter steps through them.
+- Cmd+F marks matches and Enter steps through them.
+- F12 on `u.x()` in Go opens the method of `u`'s type, not another `x` of the same name.
+- Cmd+click on a file in the code view shows it in a second column; F12 there stays in that column.
+- A resolved thread shows as one `Resolved` row; a click opens it.
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

@@ -5,7 +5,8 @@
     "ctrl--": "pr-review.back",
     "ctrl-shift--": "pr-review.forward",
     "ctrl-f": "pr-review.find",
-    "cmd-shift-c": "pr-review.code"
+    "cmd-shift-c": "pr-review.code",
+    "cmd-f": "pr-review.find"
   },
   "terminal": {
     "f12": "terminal",

@@ -15,7 +15,7 @@ import { searchPrs, prDetail, prDiff, submitReview, slackThreads, viewedFiles, s
 import { parseDiff, treeOrder } from "./diff.js";
 import { L, setLang, currentLang, macLang } from "./i18n.js";
 import { languageOf, highlightLine, sliceSegs } from "./highlight.js";
-import { fileAt, definitions, references, goplsReferences, blameLine, wordAt } from "./code.js";
+import { fileAt, definitions, references, goplsReferences, goplsDefinition, blameLine, wordAt } from "./code.js";
 import { previewKind, ensurePreview, togglePreview, previewPane, pickLine } from "./preview.js";
 
 // The lists are asked for again this often.
@@ -101,6 +101,12 @@ const untabLine = (text) => (text.includes("\t") ? text.replace(/[^\t]*\t/g, (s)
 const IDENT = /[A-Za-z0-9_$]/;
 /** The name (identifier) at `x` px into `text`, or null. */
 function nameAtX(text, x) {
+  return wordAtX(text, x)?.name ?? null;
+}
+
+/** The name at `x` px into `text`, whether a `.` comes right before it (`u.name`: a member, never a
+ *  variable of a function) and where it starts (in characters), or null. */
+function wordAtX(text, x) {
   const chars = [...text];
   const w = (ch) => (ch.charCodeAt(0) < 0x2e80 ? HIT_W : HIT_WIDE);
   let at = 0, used = 0;
@@ -110,7 +116,21 @@ function nameAtX(text, x) {
   while (a > 0 && IDENT.test(chars[a - 1])) a--;
   while (b < chars.length && IDENT.test(chars[b])) b++;
   const name = chars.slice(a, b).join("");
-  return /^[A-Za-z_$]/.test(name) ? name : null;
+  return /^[A-Za-z_$]/.test(name) ? { name, member: chars[a - 1] === ".", start: a } : null;
+}
+
+/** Which of `name`'s places as a word in `text` (from 1) starts at character `start`: gopls is
+ *  asked about that one (`x := u.x()` has the name twice). */
+function placeOf(text, name, start) {
+  const chars = [...text];
+  let n = 0;
+  for (let i = 0; i <= start && i < chars.length; i++) {
+    if (chars.slice(i, i + name.length).join("") !== name) continue;
+    if (i > 0 && IDENT.test(chars[i - 1])) continue;
+    if (i + name.length < chars.length && IDENT.test(chars[i + name.length])) continue;
+    n++;
+  }
+  return Math.max(n, 1);
 }
 
 // One line's inline Markdown as spans: `code` and **bold** lose their marks and keep their look.
@@ -208,8 +228,16 @@ const decisionOf = (pr) => ({
   APPROVED: [L("承認済み", "Approved"), "ansi2"], CHANGES_REQUESTED: [L("修正の依頼", "Changes requested"), "ansi1"], REVIEW_REQUIRED: [L("レビュー待ち", "Review required"), "ansi3"],
 })[pr.decision] ?? null;
 
+// What each column of the code view keeps for itself (the view can show two files side by side).
+// `this.<field>` reads and writes the column in use (`this.colAt`); see init() and inCol().
+const COL_FIELDS = ["code", "codeAt", "codeBusy", "codeNote", "codeScroll", "codePlain", "codeH", "mark", "markAt", "markWord",
+  "candidates", "back", "forward", "findOpen", "findInput", "findHits", "findAt", "findKey"];
+
 export default class PrReview extends View {
   init(_props, cx) {
+    this.cols = [this.newCol()];
+    this.colAt = 0;
+    for (const f of COL_FIELDS) Object.defineProperty(this, f, { configurable: true, get: () => this.cols[this.colAt][f], set: (v) => { this.cols[this.colAt][f] = v; } });
     this.role = props()?.role ?? "main";
     // The language: the one picked on the main screen (kept there), else the Mac's. Both roles follow it.
     this.lang = this.role === "main" ? load("lang", "auto") : "auto";
@@ -256,6 +284,8 @@ export default class PrReview extends View {
     this.sending = false;
     this.sendError = null;
     this.threads = new Map();
+    // Resolved threads are folded; these (their first comments' ids) were opened.
+    this.openResolved = new Set();
     // The code view: one file at the pull request's head, selectable, with the places jumped from and back to.
     this.view = "diff";
     this.code = null;
@@ -267,23 +297,15 @@ export default class PrReview extends View {
     this.forward = [];
     this.candidates = null;
     this.diffScroll = VirtualListScrollHandle.new();
-    this.codeScroll = VirtualListScrollHandle.new();
     this.plainScroll = ScrollHandle.new();
-    this.codePlain = ScrollHandle.new();
     // Text selected by dragging over the lines of the diff or the code (Cmd+C copies it):
     // `{ key, side, a: { row, col }, b: { row, col }, active }`, see selKey().
     this.sel = null;
     this.selDone = false;
     // `git blame` of lines looked at in the code view, by "<head sha>|<path>|<line>".
     this.blames = new Map();
-    // The search bar over the code or the diff (Ctrl+F): what it found, the lines in order, and which one is shown.
-    this.findOpen = false;
-    this.findHits = [];
-    this.findAt = -1;
-    this.findKey = null;
-    this.findInput = InputState.new({ placeholder: "" });
-    this.findInput.on("change", (_e, cx) => { this.runFind(cx); cx.notify(); });
-    this.findInput.on("submit", (e, cx) => { this.stepFind(e?.shift ? -1 : 1, cx); cx.notify(); });
+    // The search bar over the code or the diff (Cmd+F or Ctrl+F): what it found, the lines in order, and which one is shown.
+    // (Each column has its own: see newCol().)
     // The keyboard for Cmd+C: the screen takes it when text is selected (an input keeps its own).
     this.selFocus = cx.focus_handle();
     this.hoverRow = null;
@@ -548,7 +570,52 @@ export default class PrReview extends View {
 
   // ---- one pull request ----------------------------------------------------
 
+  // A column of the code view, empty: its file, place, marks, uses, history and search.
+  newCol() {
+    const col = { code: null, codeAt: 0, codeBusy: false, codeNote: null, codeScroll: VirtualListScrollHandle.new(), codePlain: ScrollHandle.new(),
+      codeH: null, mark: null, markAt: -1, markWord: null, candidates: null, back: [], forward: [],
+      findOpen: false, findHits: [], findAt: -1, findKey: null, findInput: InputState.new({ placeholder: "" }) };
+    // Typing in a column's search box searches that column, whichever was in use before.
+    col.findInput.on("change", (_e, cx) => { this.inCol(col, () => this.runFind(cx)); cx.notify(); });
+    col.findInput.on("submit", (e, cx) => { this.inCol(col, () => this.stepFind(e?.shift ? -1 : 1, cx)); cx.notify(); });
+    return col;
+  }
+
+  // Runs `fn` with `col` as the column in use, then puts the one in use back: work that finishes
+  // later (a file read, a lookup) lands in the column that asked for it. Nothing when it was closed.
+  inCol(col, fn) {
+    const at = this.cols.indexOf(col);
+    if (at < 0) return undefined;
+    const before = this.colAt;
+    this.colAt = at;
+    try { return fn(); } finally { this.colAt = Math.min(before, this.cols.length - 1); }
+  }
+
+  // Makes column `k` the one in use (a press in it); a selection in the other one is let go.
+  useCol(k) {
+    if (this.colAt === k || !this.cols[k]) return;
+    this.colAt = k;
+    if (this.sel?.side === "code") this.sel = null;
+  }
+
+  // Cmd+click on a file in the code view: it opens in a second column on the right (made the first time).
+  openSide(path, cx) {
+    if (this.cols.length < 2) this.cols.push(this.newCol());
+    this.useCol(1);
+    this.back = []; this.forward = []; this.candidates = null;
+    this.openCode(path, cx);
+  }
+
+  closeSide() {
+    if (this.cols.length < 2) return;
+    this.cols.length = 1;
+    this.colAt = 0;
+    if (this.sel?.side === "code") this.sel = null;
+  }
+
   pick(pr, cx) {
+    this.cols = [this.newCol()];
+    this.colAt = 0;
     this.picked = pr;
     this.view = "diff";
     this.diffAt = null;
@@ -559,6 +626,7 @@ export default class PrReview extends View {
     this.forward = [];
     this.candidates = null;
     this.detail = null;
+    this.openResolved = new Set();
     this.files = [];
     this.file = null;
     this.note = null;
@@ -659,15 +727,26 @@ export default class PrReview extends View {
   // `line` (from 1) is put in the middle and becomes the current line; `name` is marked.
   openCode(path, cx, { line = null, name = null } = {}) {
     const pr = this.picked;
+    const col = this.cols[this.colAt];
     this.view = "code";
     this.codeBusy = true;
     this.codeNote = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const still = () => this.picked?.url === pr.url;
+      const still = () => this.picked?.url === pr.url && this.cols.includes(col);
+      let raw = null, failed = null;
+      try { raw = await fileAt(pr, path); } catch (err) { failed = err; }
+      if (!still()) return;
+      this.inCol(col, () => this.showCode(path, raw, failed, { line, name }, cx));
+      cx.notify();
+    });
+  }
+
+  // The file read for the column in use goes on screen, at `line`, with `name` marked.
+  showCode(path, raw, failed, { line, name }, cx) {
+    {
       try {
-        const raw = await fileAt(pr, path);
-        if (!still()) return;
+        if (failed) throw failed;
         if (raw.includes("\0")) throw new Error(L("バイナリのファイルは表示できません。", "A binary file can't be shown."));
         const text = raw.length > MAX_CODE ? `${raw.slice(0, MAX_CODE)}\n${L("…（長いファイルのため、ここまでを表示しています）", "… (a long file: shown up to here)")}` : raw;
         const lang = languageOf(path);
@@ -686,10 +765,10 @@ export default class PrReview extends View {
         this.scrollCode(this.codeAt, line != null ? "center" : "top", cx);
         if (line != null) this.ensureBlame(cx);
       } catch (err) {
-        if (still()) this.codeNote = String(err?.message ?? err);
+        this.codeNote = String(err?.message ?? err);
       }
-      if (still()) { this.codeBusy = false; cx.notify(); }
-    });
+      this.codeBusy = false;
+    }
   }
 
   // Where you are now, to come back to: in the code, the file, the current line and the marked name;
@@ -715,7 +794,9 @@ export default class PrReview extends View {
     const row = this.code?.rows[i];
     if (!row) return;
     this.codeAt = i;
-    const name = this.pressX == null ? null : nameAtX(row.text, this.pressX - CODE_X0);
+    const word = this.pressX == null ? null : wordAtX(row.text, this.pressX - CODE_X0);
+    const name = word?.name ?? null;
+    this.markWord = word && { ...word, nth: placeOf(row.text, name, word.start) };
     this.mark = name;
     this.markAt = -1;
   }
@@ -741,28 +822,54 @@ export default class PrReview extends View {
       return;
     }
     // Said where you are: the code view shows its own note, the diff a notification.
-    const say = (text) => { if (inDiff) notify({ title: L("定義へ移れません", "Can't go to the definition"), body: text, level: "info" }); else this.codeNote = text; };
+    // The answer lands in the column F12 was pressed in.
+    const col = this.cols[this.colAt];
+    const say = (text) => { if (inDiff) notify({ title: L("定義へ移れません", "Can't go to the definition"), body: text, level: "info" }); else col.codeNote = text; };
     this.codeBusy = true;
     this.codeNote = null;
     cx.notify();
+    const word = this.markWord?.name === name ? this.markWord : null;
+    const token = this.defToken = (this.defToken ?? 0) + 1;
+    const mine = () => this.picked?.url === pr.url && this.defToken === token && this.cols.includes(col);
+    const go = (d, candidates = null) => this.inCol(col, () => {
+      this.back.push(from);
+      this.forward = [];
+      this.candidates = candidates;
+      this.openCode(d.path, cx, { line: d.line, name });
+    });
     cx.spawn(async (cx) => {
+      // Go: gopls says by type where the name is defined. Only when it can't (not installed, the
+      // code doesn't load) does the search by spelling below stand in, and that is said.
+      let why = null;
+      if (/\.go$/.test(fromPath)) {
+        try {
+          const d = await goplsDefinition(pr, name, fromPath, here, word?.nth ?? 1);
+          if (!mine()) return;
+          if (!d) say(L(`「${name}」の定義は、このリポジトリの外（標準ライブラリかモジュール）にあります。`, `${name} is defined outside this repository (the standard library or a module).`));
+          else if (d.path === fromPath && d.line === here) say(L(`「${name}」の定義はここです。`, `${name} is defined here.`));
+          else { go(d); return; }
+          col.codeBusy = false;
+          cx.notify();
+          return;
+        } catch (err) {
+          if (!mine()) return;
+          why = String(err?.message ?? err);
+        }
+      }
       try {
-        const all = await definitions(pr, name, fromPath);
+        // A name clicked right after a `.` is a member: no variable of a function is what it means.
+        const member = Boolean(word?.member);
+        const all = await definitions(pr, name, fromPath, { member });
         // The definition the current line already is, is not a place to go.
         const defs = all.filter((d) => !(d.path === fromPath && d.line === here));
-        if (this.picked?.url !== pr.url) return;
+        if (!mine()) return;
+        if (why) notify({ title: L("定義を型で確かめられませんでした（名前の検索で移ります）", "Could not find the definition by type (going by the name's spelling)"), body: why, level: "warning" });
         if (!defs.length) say(all.length ? L(`「${name}」の定義はここです。`, `${name} is defined here.`) : L(`「${name}」の定義が、このリポジトリの中に見つかりません（外部のライブラリか、探し方に合わない書き方です）。`, `No definition of ${name} in this repository (an outside library, or written in a way the search doesn't know).`));
-        else {
-          this.back.push(from);
-          this.forward = [];
-          this.candidates = defs.length > 1 ? { name, defs, at: 0 } : null;
-          this.openCode(defs[0].path, cx, { line: defs[0].line, name });
-          return;
-        }
+        else { go(defs[0], defs.length > 1 ? { name, defs, at: 0 } : null); return; }
       } catch (err) {
         say(String(err?.message ?? err));
       }
-      this.codeBusy = false;
+      col.codeBusy = false;
       cx.notify();
     });
   }
@@ -774,7 +881,8 @@ export default class PrReview extends View {
     const pr = this.picked;
     if (!pr) return;
     const inDiff = this.view !== "code";
-    const say = (text) => { if (inDiff) notify({ title: L("参照へ移れません", "Can't go to the uses"), body: text, level: "info" }); else this.codeNote = text; };
+    const col = this.cols[this.colAt];
+    const say = (text) => { if (inDiff) notify({ title: L("参照へ移れません", "Can't go to the uses"), body: text, level: "info" }); else col.codeNote = text; };
     const name = this.mark;
     if (!name) { say(L("名前をクリックしてハイライトしてから、Shift+F12 を押してください。", "Click a name to highlight it, then press Shift+F12.")); return; }
     // Pressed again on the same name: the next use in the list.
@@ -788,7 +896,7 @@ export default class PrReview extends View {
     // afterwards, and replaced by its answer; `token` keeps a late answer off a newer lookup.
     const byType = /\.go$/.test(fromPath);
     const token = this.refsToken = (this.refsToken ?? 0) + 1;
-    const mine = () => this.picked?.url === pr.url && this.refsToken === token;
+    const mine = () => this.picked?.url === pr.url && this.refsToken === token && this.cols.includes(col);
     const notHere = (d) => !(d.path === fromPath && d.line === here);
     // The first use after this line in this file, else the nearest one listed.
     const firstOf = (list) => { const next = list.findIndex((d) => d.path === fromPath && here != null && d.line > here); return next >= 0 ? next : 0; };
@@ -800,31 +908,43 @@ export default class PrReview extends View {
     this.codeBusy = true;
     this.codeNote = null;
     cx.notify();
+    const nth = this.markWord?.name === name ? this.markWord.nth ?? 1 : 1;
+    // Each step after a wait runs in the column Shift+F12 was pressed in.
     cx.spawn(async (cx) => {
-      let opened = false;
-      try {
-        const { refs, total } = await references(pr, name, fromPath);
-        if (!mine()) return;
-        const others = refs.filter(notHere);
-        if (others.length) { show(others, firstOf(others), { total: total - (refs.length - others.length), checking: byType }); opened = true; }
-        else if (!byType) say(refs.length ? L(`「${name}」が使われているのは、ここだけです。`, `${name} is used only here.`) : L(`「${name}」が使われている箇所が、このリポジトリの中に見つかりません。`, `${name} is not used anywhere in this repository.`));
-      } catch (err) {
-        say(String(err?.message ?? err));
-      }
-      if (!opened) this.codeBusy = byType;
+      let found = null, error = null;
+      try { found = await references(pr, name, fromPath); } catch (err) { error = err; }
+      if (!mine()) return;
+      this.inCol(col, () => {
+        let opened = false;
+        if (error) say(String(error?.message ?? error));
+        else {
+          const { refs, total } = found;
+          const others = refs.filter(notHere);
+          if (others.length) { show(others, firstOf(others), { total: total - (refs.length - others.length), checking: byType }); opened = true; }
+          else if (!byType) say(refs.length ? L(`「${name}」が使われているのは、ここだけです。`, `${name} is used only here.`) : L(`「${name}」が使われている箇所が、このリポジトリの中に見つかりません。`, `${name} is not used anywhere in this repository.`));
+        }
+        if (!opened) this.codeBusy = byType;
+      });
       cx.notify();
       if (!byType) return;
 
       let failed = null;
-      const precise = await goplsReferences(pr, name, fromPath, here).catch((e) => { failed = String(e?.message ?? e); return null; });
+      const precise = await goplsReferences(pr, name, fromPath, here, nth).catch((e) => { failed = String(e?.message ?? e); return null; });
       if (!mine()) return;
+      this.inCol(col, () => this.typedRefs({ precise, failed, token, name, notHere, firstOf, show, say }));
+      cx.notify();
+    });
+  }
+
+  // gopls' answer to Shift+F12, for the column in use: it replaces the list by spelling when it can.
+  typedRefs({ precise, failed, token, name, notHere, firstOf, show, say }) {
+    {
       const c = this.candidates?.token === token ? this.candidates : null;
       if (!c) this.codeBusy = false;
       if (precise == null) {
         // gopls couldn't say (not installed, or the code doesn't load): the word search stands, and why is said.
         if (c) { c.checking = false; c.unchecked = true; c.why = failed; }
         notify({ title: c ? L("参照を型で確かめられませんでした（単語の検索のまま）", "Could not check the uses by type (the word search stands)") : L(`「${name}」の参照が見つかりません`, `No uses of ${name} found`), body: failed ?? "", level: "warning" });
-        cx.notify();
         return;
       }
       const list = precise.filter(notHere);
@@ -838,8 +958,7 @@ export default class PrReview extends View {
         if (at >= 0) this.candidates = { ...c, defs: list, at, total: list.length, checking: false, typed: true };
         else show(list, firstOf(list), { total: list.length, checking: false, typed: true });
       }
-      cx.notify();
-    });
+    }
   }
 
   // Another of the places a name is defined at, in place of the one shown.
@@ -865,19 +984,39 @@ export default class PrReview extends View {
     this.goTo(to, cx);
   }
 
+  // The code view: one column, or two side by side (Cmd+click a file). Each column is drawn with
+  // itself in use, so what it shows is its own; a press in a column makes it the one in use.
   codePane(t) {
+    if (this.cols.length < 2) return this.codeCol(t, 0);
+    // A plain row, so the columns fill its height (h_flex would centre them and let them collapse).
+    return div().flex().flex_row().flex_1().min_w(0).min_h(0)
+      .child(this.inCol(this.cols[0], () => this.codeCol(t, 0)))
+      .child(div().w(1).h_full().flex_none().bg(t.border))
+      .child(this.inCol(this.cols[1], () => this.codeCol(t, 1)));
+  }
+
+  codeCol(t, k) {
     const c = this.code;
+    const col = this.cols[k];
+    const two = this.cols.length > 1;
+    const lines = k ? `code-lines-${k}` : "code-lines";
     const button = (id, label, tip, on, onClick) => div().id(id).flex_none().px(8).h(22).flex().items_center().rounded(4).text_size(12)
       .text_color(on ? t.foreground : t.dim).when(on, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))).tooltip(tip).on_click(onClick).child(label);
-    return v_flex().flex_1().min_w(0).min_h(0)
+    return v_flex().id(`code-col-${k}`).flex_1().min_w(0).min_h(0)
+      // The press reaches here after the line under it has seen it, and before any click.
+      .on_mouse_down("left", () => this.useCol(k))
       .child(h_flex().h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).text_size(12)
+        // With two columns, the one in use is underlined in the accent color: keys act on it.
+        .when(two && this.colAt === k, (el) => el.border_b(2).border_color(t.accent))
         .child(button("code-back", L("戻る", "Back"), L("ジャンプする前の場所へ（Ctrl+-）", "Where you were before the jump (Ctrl+-)"), this.back.length > 0, (_e, cx) => { this.goBack(cx); cx.notify(); }))
         .child(button("code-forward", L("進む", "Forward"), L("戻る前の場所へ（Ctrl+Shift+-）", "Where you were before going back (Ctrl+Shift+-)"), this.forward.length > 0, (_e, cx) => { this.goForward(cx); cx.notify(); }))
         .child(div().flex_1().min_w(0).truncate().px(6).font_family(settings().font_family ?? "JetBrains Mono").text_color(t.foreground).child(c?.path ?? ""))
         .when(Boolean(this.mark), (el) => el.child(h_flex().flex_none().h(22).px(8).items_center().rounded(R.sm).bg(t.accent + "26").font_family(settings().font_family ?? "JetBrains Mono").text_color(t.foreground).child(this.mark)))
         .child(this.selChip(t))
-        .when(!this.selRange(), (el) => el.child(div().flex_none().pr(8).text_color(t.dim).child(this.codeBusy ? L("読み込み中…", "Loading…") : (c?.rows.length ?? 0) <= PLAIN_MAX ? L("名前をクリックして F12 で定義へ・ドラッグで文字を選択", "Click a name, F12 for its definition · drag to select text") : L("名前をクリックして F12 で定義へ", "Click a name, F12 for its definition")))))
-      .when(this.findOpen, (el) => el.child(this.findBar(t)))
+        .when(!this.selRange(), (el) => el.child(div().flex_none().pr(8).text_color(t.dim).child(this.codeBusy ? L("読み込み中…", "Loading…") : (c?.rows.length ?? 0) <= PLAIN_MAX ? L("名前をクリックして F12 で定義へ・ドラッグで文字を選択", "Click a name, F12 for its definition · drag to select text") : L("名前をクリックして F12 で定義へ", "Click a name, F12 for its definition"))))
+        .when(k === 1, (el) => el.child(div().id("code-col-close").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4).cursor_pointer().hover((s) => s.bg(t.hover))
+          .tooltip(L("右の列を閉じる", "Close the right column")).on_click((_e, cx) => { cx.stop_propagation(); this.closeSide(); cx.notify(); }).child(ico("x", 12, t.muted)))))
+      .when(this.findOpen, (el) => el.child(this.findBar(t, col)))
       .when(Boolean(this.candidates), (el) => el.child(h_flex().id("code-candidates").h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).overflow_x_scrollbar().text_size(11)
         .child(div().flex_none().pr(4).text_color(t.muted).child(this.candidates.kind === "refs"
           ? `${L(`「${this.candidates.name}」の参照`, `Uses of ${this.candidates.name}`)} ${this.candidates.at + 1} / ${this.candidates.defs.length}${this.candidates.total > this.candidates.defs.length ? L(`（全 ${this.candidates.total} 件のうち近い順）`, ` (nearest of ${this.candidates.total})`) : ""} · ${this.candidates.typed ? L("型で確認済み", "checked by type") : this.candidates.checking ? L("単語で検索・gopls で型を確認中…", "by word · checking by type with gopls…") : this.candidates.unchecked ? L(`単語で検索（gopls で確かめられませんでした: ${this.candidates.why ?? "理由不明"}）`, `by word (gopls could not check: ${this.candidates.why ?? "unknown"})`) : L("単語で検索（文字列・コメントは除く）", "by word (strings and comments left out)")} · ${L("Shift+F12 で次へ", "Shift+F12 for the next")}:`
@@ -892,7 +1031,7 @@ export default class PrReview extends View {
           .when(Boolean(d.via), (el) => el.child(div().px(4).rounded(3).bg((d.via.kind === "rpc" ? t.ansi4 : t.ansi5) + "33").text_color(t.foreground).child(d.via.kind === "rpc" ? `gRPC ← ${/^pkg\/([^/]+)/.exec(d.path)?.[1] ?? L("別のサービス", "another service")}` : L("実装", "impl"))))
           .child(`${d.path.split("/").slice(-3).join("/")}:${d.line}`)))))
       .when(Boolean(this.codeNote), (el) => el.child(div().px(12).py(6).flex_none().text_size(12).text_color(t.blocked).child(this.codeNote)))
-      .child(div().id("code-area").flex_1().min_h(0).relative().on_size_change((size) => { this.codeH = unzoom(size.height); })
+      .child(div().id("code-area").flex_1().min_h(0).relative().on_size_change((size) => { col.codeH = unzoom(size.height); })
         .when(Boolean(c), (el) => el
           .child(div().id("code-x").absolute().inset_0().overflow_x_scrollbar().font_family(settings().font_family ?? "JetBrains Mono").text_size(12)
             // Where the press lands across the lines (the list reports only which line).
@@ -900,16 +1039,17 @@ export default class PrReview extends View {
               .on_mouse_up("left", (_e, cx) => { if (this.sel?.active) { this.endSel(); cx.notify(); } })
               // A file of up to PLAIN_MAX lines is drawn whole, so a drag over its text selects it;
               // a longer one is drawn as a list of what is on screen, where text can't be selected.
-              .when(c.rows.length <= PLAIN_MAX, (el) => el.child(v_flex().id("code-lines").size_full().overflow_y_scroll().track_scroll(this.codePlain)
+              .when(c.rows.length <= PLAIN_MAX, (el) => el.child(v_flex().id(lines).size_full().overflow_y_scroll().track_scroll(this.codePlain)
                 .children(c.rows.map((row, i) => this.codeRow(row, i, t).id(`cr-${c.path}-${i}`)
-                  .on_mouse_down("left", (e, cx) => { this.startSel("code", i, unzoom(e.local_position?.x) ?? 0); cx.notify(); })
+                  .on_mouse_down("left", (e, cx) => { this.useCol(k); this.startSel("code", i, unzoom(e.local_position?.x) ?? 0); cx.notify(); })
                   .on_mouse_move((e, cx) => { const p = localOf(e); if (p && this.moveSel(i, p.x)) cx.notify(); })
                   .on_click((_e, cx) => { if (this.selDone) { this.selDone = false; return; } this.pressCode(i); this.ensureBlame(cx); cx.notify(); })))))
-              .when(c.rows.length > PLAIN_MAX, (el) => el.child(v_virtual_list("code-lines", c.rows.length, ROW_H, (i) => `${c.path}-${i}`,
-                (range) => c.rows.slice(range.start, range.end).map((row, k) => this.codeRow(row, range.start + k, t)))
+              // The list draws its rows later, on its own: they are drawn for this column then too.
+              .when(c.rows.length > PLAIN_MAX, (el) => el.child(v_virtual_list(lines, c.rows.length, ROW_H, (i) => `${c.path}-${i}`,
+                (range) => this.inCol(col, () => c.rows.slice(range.start, range.end).map((row, j) => this.codeRow(row, range.start + j, t))) ?? [])
                 .on_item_click((key, cx) => { this.pressCode(Number(key.slice(key.lastIndexOf("-") + 1))); this.ensureBlame(cx); cx.notify(); })
                 .track_scroll(this.codeScroll).size_full()))))
-          .child(Scrollbar.vertical("code-lines").viewport_from_layout().absolute().inset_0()))
+          .child(Scrollbar.vertical(lines).viewport_from_layout().absolute().inset_0()))
         .when(!c && !this.codeBusy && !this.codeNote, (el) => el.child(div().absolute().top(10).left(14).text_size(12).text_color(t.dim).child(L("左のファイル一覧から、開くファイルを選んでください。", "Pick a file to open in the list on the left.")))));
   }
 
@@ -920,7 +1060,7 @@ export default class PrReview extends View {
       .child(div().w(48).flex_none().text_right().text_color(i === this.codeAt ? t.foreground : t.dim).child(String(i + 1)))
       .child(h_flex().flex_1().min_w(0).whitespace_nowrap().overflow_hidden().when((this.code?.rows.length ?? 0) <= PLAIN_MAX, (e) => e.cursor_text())
         .children(this.codeLine(row.segs, t, this.selIn("code", i)))
-        .when(i === this.codeAt, (e) => e.child(this.blameTag(t))));
+        .when(i === this.codeAt, (e) => e.child(this.blameTag(t, (this.code?.rows.length ?? 0) > PLAIN_MAX))));
   }
 
   // The current line's last change, from `git blame` at the pull request's head commit. Looked up
@@ -940,7 +1080,9 @@ export default class PrReview extends View {
     });
   }
 
-  blameTag(t) {
+  // In a long file the lines are a virtual list's rows, which can't have handlers of their own
+  // (registering one there throws, and the whole list goes blank): the tag is plain text there.
+  blameTag(t, inList = false) {
     const b = this.blames.get(this.blameKey());
     if (!b || b.pending) return div();
     const base = div().id("blame").flex_none().pl(32).text_size(11).text_color(t.dim);
@@ -949,10 +1091,12 @@ export default class PrReview extends View {
     // A commit of this pull request is said so: it is the change under review.
     const ours = (this.detail?.commits ?? []).some((c) => b.sha.startsWith(c.oid));
     const url = `https://github.com/${this.picked.repo}/commit/${b.sha}`;
+    const label = `${b.author}, ${ago(b.at)} • ${ours ? L("この PR ・ ", "this PR · ") : ""}${b.summary}`;
+    if (inList) return base.child(`${b.sha.slice(0, 7)} ${label}`);
     return base.cursor_pointer().hover((s) => s.text_color(t.muted)).tooltip(`${b.sha.slice(0, 7)} ${b.summary}\n${b.author} · ${new Date(b.at).toLocaleString(L("ja-JP", "en-US"))}\n${L("クリックで GitHub のコミットを開く", "Click to open the commit on GitHub")}`)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(url); })
-      .child(`${b.author}, ${ago(b.at)} • ${ours ? L("この PR ・ ", "this PR · ") : ""}${b.summary}`);
+      .child(label);
   }
 
   // Brings line `i` of the code view into view, however it is drawn now; "center" puts it in the
@@ -965,11 +1109,11 @@ export default class PrReview extends View {
     if (total > PLAIN_MAX) { this.codeScroll.scroll_to_item(i, strategy); return; }
     const half = Math.max(0, Math.floor((this.codeH ?? 0) / ROW_H / 2) - 1);
     if (strategy !== "center" || !half || !cx) { this.codePlain.scroll_to_item(i); return; }
-    const path = this.code.path;
-    this.codePlain.scroll_to_item(Math.max(0, i - half));
+    const col = this.cols[this.colAt], path = col.code.path, plain = col.codePlain;
+    plain.scroll_to_item(Math.max(0, i - half));
     cx.timer.after(50, (cx) => {
-      if (this.code?.path !== path) return;
-      this.codePlain.scroll_to_item(Math.min(total - 1, i + half));
+      if (col.code?.path !== path) return;
+      plain.scroll_to_item(Math.min(total - 1, i + half));
       cx.notify();
     });
   }
@@ -1135,7 +1279,14 @@ export default class PrReview extends View {
       const here = threads.filter((c) => c.line === row.line && c.side === row.side);
       const roots = [...new Set(here.map((c) => c.reply ?? c.id))];
       for (const root of roots) {
-        for (const c of here) if ((c.reply ?? c.id) === root) comment({ kind: "thread", comment: c, root }, c.body);
+        const list = here.filter((c) => (c.reply ?? c.id) === root);
+        // A resolved thread is one folded row, unless opened or answered in a draft.
+        if (list[0].resolved) {
+          const open = this.openResolved.has(root) || drafts.some((d) => d.reply === root);
+          push({ kind: "resolved", root, list, open }, ROW_H + 8);
+          if (!open) continue;
+        }
+        for (const c of list) comment({ kind: "thread", comment: c, root }, c.body);
         drafts.forEach((d, index) => { if (d.reply === root) comment({ kind: "draft", draft: d, index }, d.body); });
       }
       drafts.forEach((d, index) => { if (!d.reply && d.path === row.path && d.line === row.line && d.side === row.side) comment({ kind: "draft", draft: d, index }, d.body); });
@@ -1256,7 +1407,7 @@ export default class PrReview extends View {
 
   // Whether a line of the diff is inside the range of the comment being written.
   // ---- searching the file shown --------------------------------------------
-  // Ctrl+F opens a bar over the code or the diff. What is typed is looked for in the file shown, in
+  // Cmd+F (or Ctrl+F) opens a bar over the code or the diff. What is typed is looked for in the file shown, in
   // any case; every match is marked, the first one from the current line on is brought into view,
   // and Enter / Shift+Enter go to the next / previous line with one. Escape closes the bar.
 
@@ -1313,14 +1464,17 @@ export default class PrReview extends View {
     else { this.diffAt = row; this.scrollDiff(row); }
   }
 
-  findBar(t) {
+  // In the code view `col` is the column the bar is over: its buttons and Esc act on that column
+  // (a press on them doesn't make the column the one in use).
+  findBar(t, col = null) {
+    const inCol = (fn) => (col ? this.inCol(col, fn) : fn());
     const stale = this.findKey !== this.selKey();
     const n = this.findHits.length, q = this.findQuery();
     const count = !q ? "" : stale ? L("Enter で検索", "Enter to search") : n ? L(`${this.findAt + 1} / ${n} 行`, `${this.findAt + 1} of ${n} lines`) : L("見つかりません", "No results");
     const button = (id, icon, tip, onClick) => div().id(id).w(22).h(22).flex_none().flex().items_center().justify_center().rounded(R.sm).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(tip)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { onClick(cx); cx.notify(); }).child(ico(icon, 12, t.muted));
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => { inCol(() => onClick(cx)); cx.notify(); }).child(ico(icon, 12, t.muted));
     return h_flex().id("find-bar").h(34).flex_none().px(8).gap(6).items_center().border_b(1).border_color(t.border).bg(t.chrome).text_size(12)
-      .on_key_down((e, cx) => { if (e.key === "escape") { cx.stop_propagation(); this.closeFind(); cx.notify(); } })
+      .on_key_down((e, cx) => { if (e.key === "escape") { cx.stop_propagation(); inCol(() => this.closeFind()); cx.notify(); } })
       .child(h_flex().id("find-box").w(320).h(26).px(8).flex_none().items_center().rounded(R.sm).border(1).border_color(t.input).bg(t.background)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .child(Input.new(this.findInput).flex_1().h_full().text_size(12).text_color(t.foreground)))
@@ -1737,9 +1891,10 @@ export default class PrReview extends View {
       const talk = talks.get(f.path) ?? 0;
       return h_flex().id(`f-${i}-${f.path}`).h(24).flex_none().pl(4 + depth * 12).pr(8).gap(6).items_center().rounded(4).text_size(12)
         .when(shown, (el) => el.bg(t.selected))
-        .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`${f.path}\n${L("クリックでこのファイルを開く", "Click to open this file")}`)
-        .on_click((_e, cx) => {
-          if (this.view === "code") { this.back = []; this.forward = []; this.candidates = null; this.openCode(f.path, cx); }
+        .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`${f.path}\n${this.view === "code" ? L("クリックで開く・Cmd+クリックで右の列に並べて開く", "Click to open · Cmd+click to open beside, in a right column") : L("クリックでこのファイルを開く", "Click to open this file")}`)
+        .on_click((e, cx) => {
+          if (this.view === "code" && e?.modifiers?.platform) this.openSide(f.path, cx);
+          else if (this.view === "code") { this.back = []; this.forward = []; this.candidates = null; this.openCode(f.path, cx); }
           else this.selectFile(f.path);
           cx.notify();
         })
@@ -1806,6 +1961,17 @@ export default class PrReview extends View {
         .child(half(row.right === row.left ? row.right : row.right, false));
     }
     if (kind === "@") return div().w_full().px(12).h(ROW_H).flex_none().truncate().text_color(t.dim).child(row.text);
+    if (kind === "resolved") {
+      const users = [...new Set(row.list.map((c) => `@${c.user}`))].join(", ");
+      return h_flex().w_full().h(this.sizes[i]).flex_none().pl(58).py(4)
+        .child(h_flex().w(this.commentWidth()).flex_none().h_full().px(8).gap(6).items_center().rounded(8).border(1).border_color(t.border).bg(t.surface)
+          .cursor_pointer().hover((s) => s.bg(t.hover)).text_size(11).text_color(t.muted)
+          .child(ico(row.open ? "chevron-down" : "chevron-right", 12, t.muted))
+          .child(ico("check", 12, t.ansi2))
+          .child(div().flex_none().font_bold().child(L("解決済み", "Resolved")))
+          .child(div().flex_1().min_w(0).truncate().child(`${users} · ${L(`${row.list.length} 件`, `${row.list.length} comment${row.list.length === 1 ? "" : "s"}`)}`))
+          .child(div().flex_none().text_color(t.dim).child(row.open ? L("クリックで閉じる", "click to fold") : L("クリックで開く", "click to open"))));
+    }
     if (kind === "thread" || kind === "draft") {
       const mine = kind === "draft";
       const who = mine ? `${row.draft.reply ? L(`${row.draft.to ?? ""} への返信の下書き`, `Draft reply to ${row.draft.to ?? ""}`) : row.draft.startLine != null ? L(`${row.draft.startLine}〜${row.draft.line} 行への下書き`, `Draft on lines ${row.draft.startLine}–${row.draft.line}`) : L("下書き", "Draft")}${L("（未送信）・クリックで書き直す", " (not sent) · click to edit")}` : `${row.comment.user} · ${ago(row.comment.at)} · ${L("クリックで返信", "click to reply")}`;
@@ -1896,17 +2062,24 @@ export default class PrReview extends View {
       .child(div().w(this.drag?.pane === pane ? 2 : 1).h_full().bg(this.drag?.pane === pane ? t.accent : t.border));
   }
 
+  // A resolved thread is folded until opened (in the diff and in the preview alike).
+  toggleResolved(root) {
+    if (this.openResolved.has(root)) this.openResolved.delete(root); else this.openResolved.add(root);
+    this.rebuild();
+  }
+
   // A press on a row of the diff. On a line: the + at its start opens the comment box for it, anywhere
   // else the name under the pointer is marked everywhere in the file (a press off any name clears it).
-  // On a comment: GitHub's opens a reply, an unsent one opens for rewriting.
+  // On a comment: GitHub's opens a reply, an unsent one opens for rewriting; a folded resolved thread opens.
   pressRow(i) {
     const row = this.rows[i];
     if (!row) return;
     if (row.kind === "draft") { this.startDraft(row.draft, row.index); return; }
     if (row.kind === "thread") { this.startReply(row); return; }
+    if (row.kind === "resolved") { this.toggleResolved(row.root); return; }
     const x = this.pressX;
     if (x == null) return;
-    let name = null;
+    let name = null, word = null;
     if (row.kind === "pair") {
       const half = ((this.pressW ?? 0) - 1) / 2, left = x < half, side = left ? row.left : row.right;
       const at = left ? x : x - half - 1;
@@ -1916,15 +2089,19 @@ export default class PrReview extends View {
       let before = 0;
       for (const piece of left ? row.l : row.r) {
         const text = [...side.text].slice(before).join("");
-        name = nameAtX(text, at - HALF_X0);
-        if (name) break;
+        word = wordAtX(text, at - HALF_X0);
+        name = word?.name ?? null;
+        if (name) { word.nth = placeOf(side.text, name, before + word.start); break; }
         before += piece.reduce((k, sg) => k + [...sg.text].length, 0);
       }
     } else if (["+", "-", " "].includes(row.kind)) {
       if (x < PLUS_W) { if (row.line != null) this.plusPressed(row); return; }
-      name = nameAtX(row.text, x - ONE_X0);
+      word = wordAtX(row.text, x - ONE_X0);
+      name = word?.name ?? null;
+      if (word) word.nth = placeOf(row.text, name, word.start);
     } else return;
     this.diffAt = i;
+    this.markWord = word;
     this.mark = name;
     this.markAt = name ? i : -1;
   }

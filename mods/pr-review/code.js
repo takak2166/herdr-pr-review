@@ -61,8 +61,9 @@ export async function fileAt(pr, path) {
 
 /** Where `name` is defined in the pull request's repository at its head commit:
  *  `[{ path, line, text }]`, the likeliest first (the file you are in, then its folder, tests last).
+ *  `member`: the name was written after a `.`, so a variable of a function can't be it.
  *  A search by the shapes definitions take in each language -- not a type-aware one. */
-export async function definitions(pr, name, fromPath) {
+export async function definitions(pr, name, fromPath, { member = false } = {}) {
   if (!NAME.test(name)) return [];
   const dir = await cloneOf(pr);
   if (!dir) throw new Error(L(`${pr.repo} のクローンが ~/ghq/github.com にないため、定義を探せません。`, `No clone of ${pr.repo} in ~/ghq/github.com, so definitions can't be looked up.`));
@@ -71,13 +72,28 @@ export async function definitions(pr, name, fromPath) {
   const escaped = name.replace(/\$/g, "\\$");
   const patterns = (family?.patterns ?? GENERIC)(escaped);
   const globs = family ? family.exts.map((e) => `*.${e}`) : [];
-  const r = await exec("git", ["-C", dir, "grep", "-n", "-I", "-E", ...patterns.flatMap((p) => ["-e", p]), pr.sha, "--", ...globs], { timeout: 60000 });
+  const go = Boolean(family?.exts.includes("go"));
+  // For Go, -p also prints the top-level line each match is under (`sha:path=N=func …`), which
+  // tells a function's variable from a `var (` / `const (` block's entry.
+  const r = await exec("git", ["-C", dir, "grep", "-n", "-I", "-E", ...(go ? ["-p"] : []), ...patterns.flatMap((p) => ["-e", p]), pr.sha, "--", ...globs], { timeout: 60000 });
   // git grep exits 1 when nothing matches.
   if (r.code > 1) throw new Error(`git grep: ${r.stderr.trim().split("\n")[0]}`);
-  const found = r.stdout.split("\n").filter(Boolean).map((line) => {
+  const found = [];
+  const under = new Map();
+  for (const line of r.stdout.split("\n")) {
+    const head = /^[0-9a-f]+:(.*?)=\d+=(.*)$/.exec(line);
+    if (head) { under.set(head[1], head[2]); continue; }
     const m = /^[0-9a-f]+:(.*?):(\d+):(.*)$/.exec(line);
-    return m ? { path: m[1], line: Number(m[2]), text: m[3].trim().slice(0, 160) } : null;
-  }).filter(Boolean);
+    if (!m) continue;
+    if (!/^\s/.test(m[3])) under.set(m[1], m[3]);
+    // An indented match inside a function (`x := …`, `x = …`, `var x`) is a variable of that function:
+    // seen only in its own file, never as a member (`v := u.v(…)` is not the method `v`), and only
+    // a definition when it makes the variable, not when it gives it a new value.
+    else if (go && /^func[\s(]/.test(under.get(m[1]) ?? "")) {
+      if (member || m[1] !== fromPath || !(/:=/.test(m[3]) || /^\s+(var|const)\s/.test(m[3]))) continue;
+    }
+    found.push({ path: m[1], line: Number(m[2]), text: m[3].trim().slice(0, 160) });
+  }
   return found.sort(byNearness(fromPath)).slice(0, 40);
 }
 
@@ -136,17 +152,35 @@ function inCode(text, name, lang) {
   return highlightLine(text, lang).segs.some((sg) => sg.kind !== "string" && sg.kind !== "comment" && word.test(sg.text));
 }
 
-/** Where a Go name is used, by type, as gopls finds it (see gopls-refs.sh): `[{ path, line, text }]`
- *  the nearest first. Throws, saying why, when gopls can't say (not installed, the code doesn't
- *  load). `line` (from 1) is where the name is in `path`; its first line there when it isn't. */
-export async function goplsReferences(pr, name, path, line) {
+// Asks gopls (gopls-refs.sh) about the name at `line` of `path`, its `nth` place on that line.
+async function gopls(pr, name, path, line, mode, nth) {
   if (!NAME.test(name) || ext(path) !== "go") throw new Error(L("Go のファイルではありません", "Not a Go file"));
   const dir = await cloneOf(pr);
   if (!dir) throw new Error(L(`${pr.repo} のクローンが ~/ghq/github.com にありません`, `No clone of ${pr.repo} in ~/ghq/github.com`));
   await ensureCommit(dir, pr);
-  const r = await exec("sh", [`${appHome()}/mods/pr-review/gopls-refs.sh`, dir, pr.sha, path, String(line ?? 1), name], { timeout: 180000 });
+  const r = await exec("sh", [`${appHome()}/mods/pr-review/gopls-refs.sh`, dir, pr.sha, path, String(line ?? 1), name, mode, String(nth)], { timeout: 180000 });
   if (r.code === 2) throw new Error(L("gopls が見つかりません（go install golang.org/x/tools/gopls@latest で入ります）", "gopls not found (go install golang.org/x/tools/gopls@latest installs it)"));
   if (r.code !== 0) throw new Error(`gopls: ${(r.stderr.trim().split("\n").filter(Boolean).slice(-1)[0] || `exit ${r.code}`).slice(0, 200)}`);
+  return r;
+}
+
+/** Where a Go name is defined, by type, as gopls finds it: `{ path, line, text }`, or null when that
+ *  is outside the repository (the standard library, a module). Throws, saying why, when gopls can't
+ *  say. `line` (from 1) is where the name is in `path`, `nth` which of its places on that line. */
+export async function goplsDefinition(pr, name, path, line, nth = 1) {
+  const r = await gopls(pr, name, path, line, "def", nth);
+  const first = r.stdout.split("\n").find(Boolean);
+  if (!first) return null;
+  const [p, n, text] = first.split("\t");
+  return { path: p, line: Number(n), text: text ?? "" };
+}
+
+/** Where a Go name is used, by type, as gopls finds it (see gopls-refs.sh): `[{ path, line, text }]`
+ *  the nearest first. Throws, saying why, when gopls can't say (not installed, the code doesn't
+ *  load). `line` (from 1) is where the name is in `path`; its first line there when it isn't.
+ *  `nth`: which of the name's places on that line. */
+export async function goplsReferences(pr, name, path, line, nth = 1) {
+  const r = await gopls(pr, name, path, line, "refs", nth);
   // Each line is "<path>\t<line>\t<text>\t<how>": `how` is "" for a use found directly, "rpc <service>"
   // for a call through that service's generated gRPC client (from another service), "impl <service>"
   // for the service's own method a call lands in. A place found twice is listed once, with how it

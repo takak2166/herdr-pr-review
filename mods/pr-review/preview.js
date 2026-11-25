@@ -399,6 +399,19 @@ function commentList(v, t, items) {
             .cursor_pointer().hover((s) => s.border_color(t.input)).on_click((_e, cx) => { select(it); cx.notify(); })
             .child(div().text_size(11).text_color(t.dim).child(lineLabel(it.start, it.line)));
           if (it.kind === "draft") return card.child(draftRow(it, `${k}`));
+          // A resolved thread is folded to one line until opened (a draft reply keeps it open).
+          if (it.list[0].resolved) {
+            const open = v.openResolved.has(it.root) || Boolean(it.drafts?.length);
+            const users = [...new Set(it.list.map((c) => `@${c.user}`))].join(", ");
+            card.child(h_flex().id(`pv-res-${k}`).gap(6).items_center().text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+              .on_click((_e, cx) => { cx.stop_propagation(); v.toggleResolved(it.root); cx.notify(); })
+              .child(svg(`mods/pr-review/icons/${open ? "chevron-down" : "chevron-right"}.svg`).size(12).flex_none().text_color(t.muted))
+              .child(svg("mods/pr-review/icons/check.svg").size(12).flex_none().text_color(t.ansi2))
+              .child(div().flex_none().font_bold().child(L("解決済み", "Resolved")))
+              .child(div().flex_1().min_w(0).truncate().child(`${users} · ${L(`${it.list.length} 件`, `${it.list.length} comment${it.list.length === 1 ? "" : "s"}`)}`))
+              .child(div().flex_none().text_color(t.dim).child(open ? L("クリックで閉じる", "click to fold") : L("クリックで開く", "click to open"))));
+            if (!open) return card;
+          }
           return card
             .children(it.list.map((c, j) => v_flex().gap(2).when(j > 0, (el) => el.pl(8))
               .child(div().text_size(11).font_medium().text_color(t.muted).child(`@${c.user}`))

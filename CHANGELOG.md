@@ -3,6 +3,23 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## v0.3.0 — 2026-11-25
+
+- Resolved threads are folded to one `Resolved` row, in the diff and in the preview's column; a
+  click opens them.
+- Go to definition (F12) for Go asks gopls first, so `u.x()` opens the method of `u`'s type. The
+  word search, still the fallback, leaves out a function's own variables.
+- gopls lookups go through a small helper (`lsp/main.go`, built with `go` the first time) that keeps
+  gopls sessions open: after the first, a definition or the uses take well under a second instead
+  of about three.
+- The code view: Cmd+click a file to open it in a second column on the right. Each column keeps its
+  own file, history, selection and search.
+- Cmd+F opens the search, besides Ctrl+F (add `"cmd-f": "pr-review.find"` from `keys.json`).
+
+### Fixed
+
+- Files over 1,500 lines (a large `pb.go`) no longer show blank in the code view.
+
 ## v0.2.0 — 2026-11-24
 
 - Markdown preview: `Preview` in the file bar draws a Markdown file block by block. Pressing a

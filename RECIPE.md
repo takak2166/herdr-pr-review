@@ -62,7 +62,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - **Viewed** is GitHub's own mark (`viewerViewedState`, `markFileAsViewed` / `unmarkFileAsViewed`),
   read when the pull request opens; marking the shown file goes on to the next one not viewed.
   The mark shows at once and is taken back if GitHub refuses it.
-- **Comments**: drafts are kept per pull request in localStorage until sent. Resolved threads
+- **Comments**: drafts are kept per pull request in localStorage until sent. In the comment box
+  Enter starts a new line (the editor does that itself and also emits `submit`), and only a `submit`
+  with `secondary` (Cmd+Enter) saves the draft. Resolved threads
   (`isResolved` from GraphQL) are folded to one `Resolved` row; a click opens or folds them again
   (one with a draft reply stays open), in the diff and in the preview's column. Labels `ask` / `imo` /
   `nits` / `tsubuyaki` insert a shields.io badge. `Submit review` sends one review (Comment or

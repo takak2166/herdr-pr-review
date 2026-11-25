@@ -325,7 +325,8 @@ export default class PrReview extends View {
     this.search.on("change", (_e, cx) => cx.notify());
     const writing = { language: "markdown", line_numbers: false, folding: false, soft_wrap: true, font_size: 12.5, value: "" };
     this.editor = EditorState.new(writing);
-    this.editor.on("submit", (_e, cx) => this.saveDraft(cx));
+    // The editor starts a line on Enter itself and also reports it as `submit`: only Cmd+Enter saves.
+    this.editor.on("submit", (e, cx) => { if (e?.secondary) this.saveDraft(cx); });
     this.reviewBody = EditorState.new(writing);
     this.relate();
     this.count();

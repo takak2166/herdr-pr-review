@@ -17,7 +17,7 @@
 Herdr のエージェントに、バージョン（git のタグ。[CHANGELOG.md](CHANGELOG.md) を参照）を指定して次のように頼むと、手順（ファイルのコピーとキー設定のマージ）に沿って入れてくれます。
 
 ```
-github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.3.0 で入れて
+github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.3.1 で入れて
 ```
 
 手で入れる場合は、そのタグの `layouts/pr-review.json` と `mods/pr-review/` を `~/.config/herdr-app/` の同じ場所に写し、`keys.json` を自分の `keys.json` にマージしてから、`ctrl-shift-l`（または `layout.switch {name: "pr-review"}`）で切り替えます。
@@ -29,7 +29,7 @@ Herdr にはパッケージ管理の仕組みがありません。レイアウ�
 Herdr の手順では、エージェントは同じ名前があると上書きせずに名前を変えて入れます。そのため、もう一度「入れて」と頼むと別物（`pr-review-2`）ができてしまいます。更新であることをはっきり伝えてください。
 
 ```
-github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.3.0 に更新して。
+github.com/takak2166/herdr-pr-review のレイアウトを、タグ v0.3.1 に更新して。
 mods/pr-review/ と layouts/pr-review.json はその場で置き換えてよい（上書きして構わない）。
 keys.json に新しいキーがあればマージして。
 ```
@@ -60,6 +60,7 @@ keys.json に新しいキーがあればマージして。
 | Cmd+Shift+C | コードと差分を切り替え |
 | Cmd+F / Ctrl+F | 表示中のファイルを検索 |
 | ファイルを Cmd+クリック（コード表示） | 右の列に並べて開く |
+| Cmd+Enter | 書いているコメントを保存（Enter は改行） |
 | Cmd+C | 選んだ文字をコピー |
 
 ## 自分のタブと質問

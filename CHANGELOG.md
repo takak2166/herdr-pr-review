@@ -3,6 +3,12 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## v0.3.1 — 2026-11-25
+
+### Fixed
+
+- Enter in a line comment starts a new line instead of saving the draft; Cmd+Enter saves it.
+
 ## v0.3.0 — 2026-11-25
 
 - Resolved threads are folded to one `Resolved` row, in the diff and in the preview's column; a

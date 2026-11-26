@@ -10,6 +10,7 @@ with a GitHub release. To update, see [Updating](README.md#updating).
   nowhere, under their lines with their grounds. A click turns one into a line-comment draft (on your
   own pull request, a note of what to explain); drafted or dismissed ones fold. Runs Opus at high
   effort unless `config.json`'s `research` says otherwise; the answer is kept per head commit.
+- Copy a finding, or all of them (`全部コピー`), as text with its file and line.
 
 ## v0.3.1 — 2026-11-25
 

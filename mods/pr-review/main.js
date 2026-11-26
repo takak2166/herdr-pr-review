@@ -378,6 +378,8 @@ export default class PrReview extends View {
       if (row) this.startReply(row);
     } else if (c.startsWith("say-") && this.compose) this.editor.set_value(c.slice(4));
     else if (c === "research") this.startResearch(cx);
+    else if (c === "copy-research") this.copyFindings(this.research?.findings ?? [], cx);
+    else if (c.startsWith("copy-finding-")) { const f = this.research?.findings[Number(c.slice(13)) - 1]; if (f) this.copyFindings([f], cx); }
     else if (c.startsWith("finding-")) {
       // `finding-<n>`: what pressing the research's nth finding (from 1) does, for scripts.
       const f = this.research?.findings[Number(c.slice(8)) - 1];
@@ -1715,6 +1717,23 @@ export default class PrReview extends View {
     return done;
   }
 
+  // Copies findings as text, each headed by its file and line, to paste elsewhere (Slack, a chat
+  // with Claude): what it is, its title, its points and its grounds. Several are preceded by the
+  // pull request; a finding drafted or dismissed says so.
+  copyFindings(list, cx) {
+    if (!list.length) return;
+    const done = this.findingsDone();
+    const one = (f) => [
+      `${f.path}:${f.line} [${findingLabel(f, this.research?.mine)}]${done[f.id] ? ` (${done[f.id] === "drafted" ? L("下書きにした", "drafted") : L("対応不要にした", "dismissed")})` : ""} ${f.title}`,
+      ...f.points.map((p) => `- ${p}`),
+      ...(f.sources.length ? [`${L("根拠", "Grounds")}: ${f.sources.join(" · ")}`] : []),
+    ].join("\n");
+    const pr = this.picked;
+    const text = list.length === 1 ? one(list[0]) : [`${pr.repo}#${pr.number} ${pr.title}\n${pr.url}`, ...list.map(one)].join("\n\n");
+    cx.write_to_clipboard(text);
+    notify({ title: L("コピーしました", "Copied"), body: L(`下調べ ${list.length} 件`, `${list.length} finding${list.length === 1 ? "" : "s"}`), level: "info", timeout: 2000 });
+  }
+
   // A finding put aside: it folds, and stays folded for this head commit.
   dismissFinding(id) {
     const key = `${this.picked.url}@${this.research.sha}`;
@@ -1926,6 +1945,7 @@ export default class PrReview extends View {
         .child(button("b-code", this.view === "code" ? L("差分に戻る", "Back to diff") : L("コード", "Code"), this.view === "code" ? L("同じ場所の差分に戻る（Cmd+Shift+C）", "Back to the diff at the same place (Cmd+Shift+C)") : L("変更後のファイルを、いま見ている行で開く（Cmd+Shift+C。名前を選んで F12 で定義へ）", "Open the changed file at this line (Cmd+Shift+C; pick a name and press F12 for its definition)"), this.view === "code", (_e, cx) => { this.toggleCode(cx); cx.notify(); }))
         .child(button("b-info", L("情報", "Details"), L("本文・コミット・レビュー・チェックを見る", "Description, commits, reviews and checks"), this.side === "info", (_e, cx) => { this.side = this.side === "info" ? null : "info"; cx.notify(); }))
         .child(this.researchButton(t, button))
+        .when(Boolean(this.research?.findings.length), (el) => el.child(button("b-research-copy", L("全部コピー", "Copy all"), L("下調べを全部、ファイルと行つきでコピー", "Copy every finding, with its file and line"), false, (_e, cx) => this.copyFindings(this.research.findings, cx))))
         .child(button("b-ask", L("Claude に聞く", "Ask Claude"), this.chatTab() ? L("この PR の Claude Code の会話を右に開き、続けて聞く", "Open this pull request's Claude Code session on the right and ask on") : L("この PR について Claude Code に聞く（右に開きます）", "Ask Claude Code about this pull request (opens on the right)"), this.askOpen, (_e, cx) => { this.pressAsk(); cx.notify(); }))
         .child(button("b-send", drafts ? `${L("レビューを送信", "Submit review")} ${drafts}` : L("レビューを送信", "Submit review"), L("行コメントと本文を 1 回のレビューとして送る・Approve する", "Send the line comments and a summary as one review, or approve"), this.side === "send", (_e, cx) => { this.side = this.side === "send" ? null : "send"; this.confirm = null; cx.notify(); }))
         .child(div().id("open-pr").flex_none().px(8).h(24).flex().items_center().rounded(8).bg(t.solid).text_color(t.solid_foreground).text_size(12).cursor_pointer()
@@ -2116,7 +2136,12 @@ export default class PrReview extends View {
       if (kind === "finding") {
         const f = row.finding, color = findingColor(f, t);
         const who = `${L("下調べ", "Research")} · ${findingLabel(f, this.research?.mine)} · ${this.research?.mine ? L("クリックでセルフコメントの下書きにする", "click to draft a comment of your own") : L("クリックでコメントの下書きにする", "click to draft a comment")}`;
-        return this.commentBox(row, i, t, { who, color, title: color, bg: color + "14", indent: 0 });
+        // A copy chip on the card, where a row may hold controls (a virtual list's rows can't: there
+        // the comment box opened from the card has the same button).
+        const copy = this.rows.length <= PLAIN_MAX ? div().id(`finding-copy-${i}`).flex_none().px(6).h(16).flex().items_center().rounded(R.sm).text_size(11).font_medium().text_color(t.muted)
+          .cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(L("ファイルと行つきでコピー", "Copy, with the file and line"))
+          .on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); this.copyFindings([f], cx); }).child(L("コピー", "Copy")) : null;
+        return this.commentBox(row, i, t, { who, color, title: color, bg: color + "14", indent: 0, action: copy });
       }
       const mine = kind === "draft";
       const who = mine ? `${row.draft.reply ? L(`${row.draft.to ?? ""} への返信の下書き`, `Draft reply to ${row.draft.to ?? ""}`) : row.draft.startLine != null ? L(`${row.draft.startLine}〜${row.draft.line} 行への下書き`, `Draft on lines ${row.draft.startLine}–${row.draft.line}`) : L("下書き", "Draft")}${L("（未送信）・クリックで書き直す", " (not sent) · click to edit")}` : `${row.comment.user} · ${ago(row.comment.at)} · ${L("クリックで返信", "click to reply")}`;
@@ -2133,10 +2158,12 @@ export default class PrReview extends View {
 
   // A comment, a draft or a finding in the diff: a box under its line, its heading and then its
   // text as formatComment wrapped it. `indent` moves a reply in under what it answers.
-  commentBox(row, i, t, { who, color, title, bg, indent }) {
+  commentBox(row, i, t, { who, color, title, bg, indent, action = null }) {
     return h_flex().w_full().h(this.sizes[i]).flex_none().pl(58 + indent).py(4)
       .child(v_flex().w(this.commentWidth() - indent).flex_none().h_full().px(8).py(4).rounded(8).border(1).border_color(color).bg(bg).overflow_hidden()
-        .child(div().h(18).flex_none().text_size(11).font_bold().text_color(title).truncate().child(who))
+        .child(h_flex().h(18).flex_none().gap(6).items_center()
+          .child(div().flex_1().min_w(0).text_size(11).font_bold().text_color(title).truncate().child(who))
+          .when(Boolean(action), (el) => el.child(action)))
         .children(row.lines.map((line) => div().flex().flex_row().flex_none().h(COMMENT_LINE).whitespace_nowrap().overflow_hidden()
           .text_color(line.kind === "quote" ? t.muted : t.foreground)
           .when(line.kind === "quote", (el) => el.border_l(2).border_color(t.input).pl(QUOTE_PAD - 2))
@@ -2291,6 +2318,7 @@ export default class PrReview extends View {
       .child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(L("この Mac に下書きとして保存します。「レビューを送信」するまで GitHub には出ません。", "Saved as a draft on this Mac. Nothing reaches GitHub until you submit the review.")))
         .when(c.index != null, (el) => el.child(button("draft-drop", L("削除", "Delete"), false, (_e, cx) => { this.dropDraft(c.index); cx.notify(); })))
+        .when(Boolean(c.finding), (el) => el.child(button("finding-copy", L("下調べをコピー", "Copy the finding"), false, (_e, cx) => { const f = this.research?.findings.find((x) => x.id === c.finding); if (f) this.copyFindings([f], cx); })))
         .when(Boolean(c.finding), (el) => el.child(button("finding-dismiss", L("対応不要", "Dismiss"), false, (_e, cx) => { this.dismissFinding(c.finding); this.compose = null; this.rebuild(); cx.notify(); })))
         .child(button("draft-cancel", L("キャンセル", "Cancel"), false, (_e, cx) => { this.compose = null; cx.notify(); }))
         .child(button("draft-save", L("保存（⌘Enter）", "Save (⌘Enter)"), true, (_e, cx) => this.saveDraft(cx))));

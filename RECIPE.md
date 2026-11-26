@@ -109,6 +109,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   dismissed, folds to one row (deleting the draft brings it back). The button reads `下調べ n/m`
   (handled / all): a press shows or hides the findings, Shift+press asks again. The answer is kept
   per head commit in `data/pr-review/research/`, with the models that answered.
+  `コピー` on a box (only where rows can hold controls: files of up to 1500 rows), `下調べをコピー` in
+  the comment box opened from one, and `全部コピー` in the header copy findings as text: `path:line
+  [kind] title`, its points, its grounds; all of them start with the pull request.
 - **Slack links** (optional): `data/pr-review/slack-threads.jsonl`, lines of
   `{"pr": "<url>", "thread": "<slack url>"}`, puts a Slack icon and button on those pull requests.
 
@@ -195,4 +198,5 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - A resolved thread shows as one `Resolved` row; a click opens it.
 - `下調べ` on a pull request shows findings under lines of the diff and `下調べ 0/n` in the header;
   a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
+- `全部コピー` puts every finding on the clipboard, each starting with its `path:line`.
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

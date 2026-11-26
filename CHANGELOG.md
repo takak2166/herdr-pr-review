@@ -3,7 +3,7 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
-## Unreleased
+## v0.4.0 — 2026-11-26
 
 - Research (`下調べ` in the header): Claude Code reads the pull request and points at code that
   disagrees with the description, a design document or ADR, and at choices whose reason is written

@@ -8,8 +8,8 @@
 # installed, 1 when it fails.
 #
 # The files are the pull request's head commit, taken out of the clone's git objects into a cache
-# folder (~/Library/Caches/herdr-pr-review/trees/<sha>); the clone itself is only read. The five
-# most recently used trees are kept. gopls runs as one server shared by every lookup
+# folder by tree.sh (~/Library/Caches/herdr-pr-review/trees/<sha>); the clone itself is only read.
+# gopls runs as one server shared by every lookup
 # (gopls serve on a socket in the cache folder), started the first time and kept running.
 # The questions go to it through gopls-lsp (lsp/main.go, built into the cache folder the first time
 # and whenever its source changes), which keeps one gopls session per tree open: a lookup after the
@@ -31,18 +31,8 @@ if ! command -v gopls >/dev/null 2>&1 || ! command -v go >/dev/null 2>&1; then
 fi
 command -v gopls >/dev/null 2>&1 || exit 2
 cache="$HOME/Library/Caches/herdr-pr-review"
-tree="$cache/trees/$sha"
 sock="$cache/gopls.sock"
-mkdir -p "$cache/trees"
-
-if [ ! -f "$tree/.complete" ]; then
-  rm -rf "$tree.part" && mkdir -p "$tree.part" || exit 1
-  git -C "$clone" archive "$sha" | tar -x -C "$tree.part" || { rm -rf "$tree.part"; exit 1; }
-  touch "$tree.part/.complete" && rm -rf "$tree" && mv "$tree.part" "$tree" || exit 1
-fi
-touch "$tree"
-# Older trees go: each is a whole checkout.
-ls -1t "$cache/trees" | grep -v '\.part$' | tail -n +6 | while read -r old; do rm -rf "$cache/trees/$old"; done
+tree=$(sh "$(dirname "$0")/tree.sh" "$clone" "$sha") || exit 1
 
 file="$tree/$path"
 [ -f "$file" ] || exit 1

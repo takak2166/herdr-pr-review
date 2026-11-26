@@ -110,7 +110,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   fallback for very large pull requests, review comments, Viewed marks, `submitReview`), `diff.js`
   (unified diff → rows; quoted and non-ASCII paths; tree order, generated files last), `highlight.js`
   (a small per-language tokenizer), `code.js` (files, definitions, uses, blame from the local clone
-  with `git show` / `git grep` / `git blame`), `gopls-refs.sh` (gopls on an extracted copy of the
+  with `git show` / `git grep` / `git blame`), `tree.sh` (the head commit taken out of the clone's
+  git objects into a cache folder, the five most recent kept), `gopls-refs.sh` (gopls on that copy of the
   commit: definitions and uses, plus the gRPC bridge), `lsp/main.go` (gopls-lsp: a small server, standard
   library only, that keeps up to three LSP sessions open through the shared gopls daemon and exits
   after 30 idle minutes), `preview.js` (the Markdown preview: blocks with their lines, the

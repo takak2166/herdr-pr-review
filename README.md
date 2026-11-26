@@ -7,6 +7,7 @@ A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本�
 - Line and multi-line comments and replies, drafted locally and submitted as one review; resolved threads stay folded until clicked
 - A preview of Markdown files: press a block (heading, paragraph, list item, table, quote, code) to comment on its lines; Mermaid diagrams drawn as SVG, enlarged with a click and dragged about
 - A code view of the head commit: go to definition (F12), find uses (Shift+F12; for Go by type with gopls, across gRPC services), blame of the current line, search (Cmd+F or Ctrl+F), text selection, a second column side by side (Cmd+click a file)
+- Research: Claude Code reads the pull request first and points at code that disagrees with the description, a design document or ADR, and at choices whose reason is written nowhere; a click turns one into a line-comment draft (on your own pull request, a note of what to explain)
 - Ask Claude Code about the pull request in a pane on the right
 - English and Japanese (follows the Mac's language; switchable)
 
@@ -42,7 +43,7 @@ By hand: replace `mods/pr-review/` and `layouts/pr-review.json` with the new ver
 - `gh`, logged in (lists, diffs, Viewed marks and reviews go through it)
 - A clone of each repository at `~/ghq/github.com/<owner>/<repo>` for the code view, definitions, uses and blame (the diff works without one)
 - Optional: `gopls` and `go`, to find Go definitions and uses by type (a word search is used otherwise). `go` also builds a small helper the first time (`mods/pr-review/lsp/main.go`, standard library only) that keeps gopls sessions open, so lookups after the first take well under a second
-- `claude` (Claude Code) for the right pane
+- `claude` (Claude Code) for the right pane and the research. The research runs Opus at high effort by default and reads much of the repository: one run can take a large share of your Claude usage (see below to choose another model)
 - Optional: Google Chrome, Node.js 22 or later, and a copy of Mermaid, to draw Mermaid diagrams in the Markdown preview (without them the diagram's code is shown). Mermaid is fetched once from npm; diagrams are drawn locally and sent nowhere:
 
   ```sh
@@ -70,11 +71,12 @@ By hand: replace `mods/pr-review/` and `layouts/pr-review.json` with the new ver
 ```json
 {
   "tabs": [{ "name": "Team", "query": "repo:owner/name" }],
-  "prompts": [{ "label": "Security", "ask": "Look for security problems in this pull request." }]
+  "prompts": [{ "label": "Security", "ask": "Look for security problems in this pull request." }],
+  "research": { "model": "sonnet", "effort": "medium" }
 }
 ```
 
-A tab's query is a GitHub search (`is:pr is:open` is added). Your prompts replace the two built-in questions (Review, Diagram). Run `pr-review.config` (or restart) after editing.
+A tab's query is a GitHub search (`is:pr is:open` is added). Your prompts replace the two built-in questions (Review, Diagram). `research` sets the model and effort the research runs with (default `opus` and `high`; effort is one of `low`, `medium`, `high`, `xhigh`, `max`). Run `pr-review.config` (or restart) after editing.
 
 ## Filtering the list
 

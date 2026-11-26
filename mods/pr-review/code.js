@@ -39,8 +39,8 @@ export async function cloneOf(pr) {
   return (await fs.exists(`${dir}/.git`)) ? dir : null;
 }
 
-// The clone has the pull request's head commit; it is fetched when it doesn't.
-async function ensureCommit(dir, pr) {
+/** The clone has the pull request's head commit; it is fetched when it doesn't. */
+export async function ensureCommit(dir, pr) {
   const has = await exec("git", ["-C", dir, "cat-file", "-e", `${pr.sha}^{commit}`]);
   if (has.code === 0) return;
   const got = await exec("git", ["-C", dir, "fetch", "--quiet", "--no-tags", "origin", `pull/${pr.number}/head`], { timeout: 120000 });

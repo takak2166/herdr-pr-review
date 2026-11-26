@@ -3,6 +3,14 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## Unreleased
+
+- Research (`下調べ` in the header): Claude Code reads the pull request and points at code that
+  disagrees with the description, a design document or ADR, and at choices whose reason is written
+  nowhere, under their lines with their grounds. A click turns one into a line-comment draft (on your
+  own pull request, a note of what to explain); drafted or dismissed ones fold. Runs Opus at high
+  effort unless `config.json`'s `research` says otherwise; the answer is kept per head commit.
+
 ## v0.3.1 — 2026-11-25
 
 ### Fixed

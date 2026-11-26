@@ -97,6 +97,18 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   The first question opens a tab `<repo>#<n> review` running `claude` in the clone (read-only
   instructions in the first message) and shows the right pane; with a session already there, the pane
   opens on it and the question is sent into it (`hc send`, which waits for an unsent draft).
+- **Research** (`下調べ` in the header, or `pr-review.research`): Claude Code (`claude -p`, Read / Grep /
+  Glob only, model and effort from `config.json`'s `research`, default `opus` / `high`) reads the head
+  commit's files with the description and the diff, and answers in a JSON schema: findings of kind
+  `mismatch` (code against the description, a design document or ADR, or other code) or `unexplained`
+  (a choice whose reason is in no comment and not in the description), each with `path`, `line`,
+  `title`, `points`, `sources` and a draft `comment`. Findings on lines the diff doesn't show are left
+  out. Each shows under its line as a box (red for mismatch, blue for unexplained) with its grounds;
+  a click opens the comment box with the draft (on your own pull request a note of what to explain,
+  otherwise a question), where `対応不要` dismisses it. A finding with a draft made from it, or
+  dismissed, folds to one row (deleting the draft brings it back). The button reads `下調べ n/m`
+  (handled / all): a press shows or hides the findings, Shift+press asks again. The answer is kept
+  per head commit in `data/pr-review/research/`, with the models that answered.
 - **Slack links** (optional): `data/pr-review/slack-threads.jsonl`, lines of
   `{"pr": "<url>", "thread": "<slack url>"}`, puts a Slack icon and button on those pull requests.
 
@@ -111,7 +123,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   (unified diff → rows; quoted and non-ASCII paths; tree order, generated files last), `highlight.js`
   (a small per-language tokenizer), `code.js` (files, definitions, uses, blame from the local clone
   with `git show` / `git grep` / `git blame`), `tree.sh` (the head commit taken out of the clone's
-  git objects into a cache folder, the five most recent kept), `gopls-refs.sh` (gopls on that copy of the
+  git objects into a cache folder, the five most recent kept), `research.js` and `research.sh` (the research: the
+  request, the schema, `claude -p` in the head commit's files), `gopls-refs.sh` (gopls on that copy of the
   commit: definitions and uses, plus the gRPC bridge), `lsp/main.go` (gopls-lsp: a small server, standard
   library only, that keeps up to three LSP sessions open through the shared gopls daemon and exits
   after 30 idle minutes), `preview.js` (the Markdown preview: blocks with their lines, the
@@ -123,7 +136,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   `spaces`, `panes`, `theme`, `settings` (font and zoom), `notify`, `nextCommand`, `appHome`,
   `readTextFile`, `home`.
 - `keys.json`: the section `layout:pr-review` and terminal pass-through for the same keys.
-- `data/pr-review/config.json` (optional): `tabs` and `prompts`.
+- `data/pr-review/config.json` (optional): `tabs`, `prompts` and `research` (`model`, `effort`).
+- `data/pr-review/research/`: the research kept per pull request and head commit.
 - Programs: `gh` (logged in), `git`, `defaults`, optionally `gopls` and `go`, `claude`, and for
   Mermaid `node` (22+, for its WebSocket) and Google Chrome.
 
@@ -149,7 +163,15 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   names (a version in the key). An image is one GPU texture: very large ones break, so cap the zoom.
 - An image in a flex column stretches: give its box an explicit width and height.
 - Sizes from `on_size_change` are zoomed as pointer positions are: divide them too.
-- The app's PATH may lack Go's tools: `gopls-refs.sh` borrows the login shell's PATH.
+- The app's PATH may lack Go's tools: `gopls-refs.sh` borrows the login shell's PATH. So does `research.sh`, for
+  `claude`.
+- The research is costly: at high effort, a run on a large repository read for about four minutes
+  and took a large share of a Claude session's usage. It runs only when asked, and its answer is kept.
+- `claude -p --json-schema` puts the answer in `structured_output`; `modelUsage` names the models.
+  The extracted tree is not a trusted workspace, so Claude Code ignores the repository's own
+  `.claude/settings.json` permissions there (only reading tools are given anyway).
+- A finding's box is a row of the diff list: like comments, it is wrapped ahead of time and pressing
+  it goes through `pressRow`.
 - Assumes macOS (`defaults`, `dscl`, `~/Library/Caches/herdr-pr-review` for gopls trees) and clones
   at `~/ghq/github.com/<owner>/<repo>`. gopls trees are whole checkouts (the five most recent kept);
   one `gopls serve` keeps running on a socket in the cache folder, and gopls-lsp is built into
@@ -171,4 +193,6 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - F12 on `u.x()` in Go opens the method of `u`'s type, not another `x` of the same name.
 - Cmd+click on a file in the code view shows it in a second column; F12 there stays in that column.
 - A resolved thread shows as one `Resolved` row; a click opens it.
+- `下調べ` on a pull request shows findings under lines of the diff and `下調べ 0/n` in the header;
+  a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

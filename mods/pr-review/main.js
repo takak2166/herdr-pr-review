@@ -17,6 +17,7 @@ import { L, setLang, currentLang, macLang } from "./i18n.js";
 import { languageOf, highlightLine, sliceSegs } from "./highlight.js";
 import { fileAt, definitions, references, goplsReferences, goplsDefinition, blameLine, wordAt } from "./code.js";
 import { previewKind, ensurePreview, togglePreview, previewPane, pickLine } from "./preview.js";
+import { readResearch, runResearch, RESEARCH_MODEL, RESEARCH_EFFORT } from "./research.js";
 
 // The lists are asked for again this often.
 const LIST_MS = 300000;
@@ -210,6 +211,10 @@ function formatComment(text, width) {
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback;
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const stop = (_e, cx) => cx.stop_propagation();
+// A finding of the research (research.js): its color and its name. On your own pull request an
+// unexplained choice is a place to write the reason, on someone else's a question to ask.
+const findingColor = (f, t) => (f.kind === "mismatch" ? t.blocked : t.ansi4);
+const findingLabel = (f, mine) => (f.kind === "mismatch" ? L("食い違い", "Mismatch") : mine ? L("説明を書く場所", "To explain") : L("説明がない", "Unexplained"));
 // Text as GitHub shows it: template comments are left out (and would otherwise swallow what follows them).
 const shownText = (text, max) => text.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, max);
 
@@ -286,6 +291,16 @@ export default class PrReview extends View {
     this.threads = new Map();
     // Resolved threads are folded; these (their first comments' ids) were opened.
     this.openResolved = new Set();
+    // Research (research.js): what Claude Code found for the pull request shown, whether it is drawn
+    // in the diff, and the findings dismissed (per pull request and head commit; a finding with a
+    // draft made from it counts as drafted). Handled findings fold to one row until opened.
+    this.research = null;
+    this.researchError = null;
+    this.researching = new Set();
+    this.showResearch = load("show-research", true);
+    this.researchDone = load("research-done", {});
+    this.openFindings = new Set();
+    this.diffText = null;
     // The code view: one file at the pull request's head, selectable, with the places jumped from and back to.
     this.view = "diff";
     this.code = null;
@@ -362,6 +377,12 @@ export default class PrReview extends View {
       const row = this.rows[this.jumped]?.kind === "thread" ? this.rows[this.jumped] : this.rows.find((r) => r.kind === "thread");
       if (row) this.startReply(row);
     } else if (c.startsWith("say-") && this.compose) this.editor.set_value(c.slice(4));
+    else if (c === "research") this.startResearch(cx);
+    else if (c.startsWith("finding-")) {
+      // `finding-<n>`: what pressing the research's nth finding (from 1) does, for scripts.
+      const f = this.research?.findings[Number(c.slice(8)) - 1];
+      if (f) { if (f.path !== this.current()?.path) { this.file = f.path; this.compose = null; this.rebuild(); } this.startFinding(f); }
+    }
     else if (c === "draft-save") this.saveDraft(cx);
     else if (c === "draft-cancel") { this.compose = null; this.composeNote = null; }
     else if (c === "draft-drop-last" && this.draftsOf().length) this.dropDraft(this.draftsOf().length - 1);
@@ -448,7 +469,9 @@ export default class PrReview extends View {
         const c = text ? JSON.parse(text) : {};
         const tabs = (Array.isArray(c.tabs) ? c.tabs : []).filter((x) => typeof x?.name === "string" && typeof x?.query === "string" && x.query.trim());
         const prompts = (Array.isArray(c.prompts) ? c.prompts : []).filter((x) => typeof x?.label === "string" && typeof x?.ask === "string");
-        this.config = { tabs, prompts: prompts.length ? prompts : null };
+        // `research`: the model and effort the research reads with (research.js has the defaults).
+        const research = { ...(typeof c.research?.model === "string" ? { model: c.research.model } : {}), ...(typeof c.research?.effort === "string" ? { effort: c.research.effort } : {}) };
+        this.config = { tabs, prompts: prompts.length ? prompts : null, research };
         this.configError = null;
       } catch (e) {
         this.configError = `data/pr-review/config.json: ${String(e?.message ?? e)}`;
@@ -628,6 +651,10 @@ export default class PrReview extends View {
     this.candidates = null;
     this.detail = null;
     this.openResolved = new Set();
+    this.research = null;
+    this.researchError = null;
+    this.openFindings = new Set();
+    this.diffText = null;
     this.files = [];
     this.file = null;
     this.note = null;
@@ -640,6 +667,8 @@ export default class PrReview extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       const still = () => this.picked?.url === pr.url;
+      // What Claude Code found earlier for this head commit, if it was asked.
+      readResearch(pr).then((r) => { if (still() && r) { this.research = r; this.rebuild(); cx.notify(); } }, (e) => { if (still()) { this.researchError = String(e?.message ?? e); cx.notify(); } });
       // The details and the diff arrive separately: one failing leaves the other.
       prDetail(pr).then((detail) => {
         if (!still()) return;
@@ -655,6 +684,7 @@ export default class PrReview extends View {
         const v = await viewed;
         if (!still()) return;
         this.viewedOn = v.error ? null : { url: pr.url, id: v.id, viewed: v.viewed };
+        this.diffText = diff;
         const lines = diff.split("\n");
         this.files = parseDiff(lines.length > MAX_LINES ? lines.slice(0, MAX_LINES).join("\n") : diff).files;
         this.note = [
@@ -1291,7 +1321,17 @@ export default class PrReview extends View {
         drafts.forEach((d, index) => { if (d.reply === root) comment({ kind: "draft", draft: d, index }, d.body); });
       }
       drafts.forEach((d, index) => { if (!d.reply && d.path === row.path && d.line === row.line && d.side === row.side) comment({ kind: "draft", draft: d, index }, d.body); });
+      // What the research found on this line: whole until a draft is made of it or it is dismissed.
+      if (row.side !== "RIGHT") return;
+      for (const f of findings.filter((x) => x.path === row.path && x.line === row.line)) {
+        const how = done[f.id] ?? null;
+        if (how && !this.openFindings.has(f.id)) { push({ kind: "finding-folded", finding: f, how }, ROW_H + 8); continue; }
+        const text = [`**${f.title}**`, ...f.points.map((p) => `- ${p}`), ...(f.sources.length ? [`> ${L("根拠", "Grounds")}: ${f.sources.join(" · ")}`] : [])].join("\n");
+        comment({ kind: "finding", finding: f, how }, text);
+      }
     };
+    const findings = this.showResearch ? this.research?.findings ?? [] : [];
+    const done = this.findingsDone();
     let widest = 0;
     // A file changed on one side only (lines only added, or only removed) shows in one column whatever the setting.
     const split = this.split && !this.oneSided(file);
@@ -1631,11 +1671,64 @@ export default class PrReview extends View {
     const list = (this.drafts[this.picked.url] ??= []);
     const { path, line, side, index, reply, to, startLine } = this.compose;
     const range = startLine != null && startLine < line ? { startLine } : {};
-    if (index == null) list.push({ path, line, side, body, ...range, ...(reply ? { reply, to } : {}) }); else list[index] = { ...list[index], body };
+    const finding = this.compose.finding ? { finding: this.compose.finding } : {};
+    if (index == null) list.push({ path, line, side, body, ...range, ...(reply ? { reply, to } : {}), ...finding }); else list[index] = { ...list[index], body };
     save("drafts", this.drafts);
+    if (this.compose.finding) this.openFindings.delete(this.compose.finding);
     this.compose = null;
     this.rebuild();
     cx.notify();
+  }
+
+  // ---- research (research.js) ----------------------------------------------
+
+  // Asks Claude Code about the pull request shown (again, when it was asked before). It reads for
+  // a minute or more; the answer is kept, so switching to another pull request meanwhile loses nothing.
+  startResearch(cx) {
+    const pr = this.picked;
+    if (!pr || this.researching.has(pr.url)) return;
+    if (!this.detail || this.diffText == null) { this.researchError = L("PR の本文と差分を読み込んでから押してください。", "Wait until the description and the diff have loaded."); return; }
+    this.researching.add(pr.url);
+    this.researchError = null;
+    const job = { body: shownText(this.detail.body ?? "", 20000), diff: this.diffText, files: this.files, mine: Boolean(pr.mine), ...(this.config?.research ?? {}) };
+    cx.spawn(async (cx) => {
+      try {
+        const r = await runResearch(pr, job);
+        if (this.picked?.url === pr.url) { this.research = r; this.showResearch = true; save("show-research", true); this.rebuild(); }
+        notify({ title: L("下調べが終わりました", "Research done"), body: L(`${pr.repoName} #${pr.number}: ${r.findings.length} 件`, `${pr.repoName} #${pr.number}: ${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}`), level: "info" });
+      } catch (e) {
+        const why = String(e?.message ?? e);
+        if (this.picked?.url === pr.url) this.researchError = why;
+        notify({ title: L("下調べできませんでした", "Research failed"), body: why.slice(0, 200), level: "warning" });
+      }
+      this.researching.delete(pr.url);
+      cx.notify();
+    });
+  }
+
+  // What was done with the findings of the research shown: { id: "drafted" | "dismissed" }. A finding
+  // is drafted while a draft made from it is there (deleting the draft brings the finding back).
+  findingsDone() {
+    if (!this.research) return {};
+    const done = { ...(this.researchDone[`${this.picked.url}@${this.research.sha}`] ?? {}) };
+    for (const d of this.draftsOf()) if (d.finding) done[d.finding] = "drafted";
+    return done;
+  }
+
+  // A finding put aside: it folds, and stays folded for this head commit.
+  dismissFinding(id) {
+    const key = `${this.picked.url}@${this.research.sha}`;
+    this.researchDone[key] = { ...(this.researchDone[key] ?? {}), [id]: "dismissed" };
+    save("research-done", this.researchDone);
+    this.openFindings.delete(id);
+  }
+
+  // A finding pressed: the comment box opens on its line with Claude Code's draft, to rewrite or drop.
+  startFinding(f) {
+    this.composeNote = null;
+    this.compose = { path: f.path, line: f.line, side: "RIGHT", index: null, reply: null, to: null, startLine: null, finding: f.id };
+    this.editor.set_value(f.comment);
+    this.editor.focus();
   }
 
   dropDraft(index) {
@@ -1832,6 +1925,7 @@ export default class PrReview extends View {
         .when(this.threads.has(pr.url), (el) => el.child(button("b-slack", h_flex().gap(6).items_center().child(image("mods/pr-review/slack.svg").w(12).h(12).flex_none()).child("Slack"), `${L("Slack でこの PR のスレッドを開く", "Open this pull request's Slack thread")}\n${this.threads.get(pr.url)}`, false, () => exec("open", [this.threads.get(pr.url)]))))
         .child(button("b-code", this.view === "code" ? L("差分に戻る", "Back to diff") : L("コード", "Code"), this.view === "code" ? L("同じ場所の差分に戻る（Cmd+Shift+C）", "Back to the diff at the same place (Cmd+Shift+C)") : L("変更後のファイルを、いま見ている行で開く（Cmd+Shift+C。名前を選んで F12 で定義へ）", "Open the changed file at this line (Cmd+Shift+C; pick a name and press F12 for its definition)"), this.view === "code", (_e, cx) => { this.toggleCode(cx); cx.notify(); }))
         .child(button("b-info", L("情報", "Details"), L("本文・コミット・レビュー・チェックを見る", "Description, commits, reviews and checks"), this.side === "info", (_e, cx) => { this.side = this.side === "info" ? null : "info"; cx.notify(); }))
+        .child(this.researchButton(t, button))
         .child(button("b-ask", L("Claude に聞く", "Ask Claude"), this.chatTab() ? L("この PR の Claude Code の会話を右に開き、続けて聞く", "Open this pull request's Claude Code session on the right and ask on") : L("この PR について Claude Code に聞く（右に開きます）", "Ask Claude Code about this pull request (opens on the right)"), this.askOpen, (_e, cx) => { this.pressAsk(); cx.notify(); }))
         .child(button("b-send", drafts ? `${L("レビューを送信", "Submit review")} ${drafts}` : L("レビューを送信", "Submit review"), L("行コメントと本文を 1 回のレビューとして送る・Approve する", "Send the line comments and a summary as one review, or approve"), this.side === "send", (_e, cx) => { this.side = this.side === "send" ? null : "send"; this.confirm = null; cx.notify(); }))
         .child(div().id("open-pr").flex_none().px(8).h(24).flex().items_center().rounded(8).bg(t.solid).text_color(t.solid_foreground).text_size(12).cursor_pointer()
@@ -1851,6 +1945,41 @@ export default class PrReview extends View {
         .children(this.prompts().map((p, i) => div().id(`ask-${i}`).flex_none().px(8).h(24).flex().items_center().rounded(8).bg(t.raised).text_color(t.foreground)
           .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(p.ask).on_click((_e, cx) => this.ask(p, cx)).child(p.label)))
         .child(this.inputBox("ask-box", this.askInput, L("Claude に聞く（Enter で送る）", "Ask Claude (Enter sends)"), t))));
+  }
+
+  // The header's research button. Before the research: starts it. While Claude Code reads: says so.
+  // After: how many findings are handled, and a press shows or hides them in the diff
+  // (Shift+press asks again, as `pr-review.research` does).
+  researchButton(t, button) {
+    const pr = this.picked;
+    const r = this.research;
+    const what = pr.mine
+      ? L("食い違いと、理由をコメントで書いておくべき場所", "mismatches, and places whose reason should be written down")
+      : L("食い違いと、理由が書かれていない場所", "mismatches, and choices whose reason isn't written down");
+    if (this.researching.has(pr.url)) {
+      return div().id("b-research").flex_none().px(8).h(24).flex().items_center().gap(6).rounded(8).text_size(12).bg(t.surface).text_color(t.muted).border(1).border_color(t.border)
+        .tooltip(L("Claude Code が PR を読んでいます（1〜数分）。ほかの PR に移っても続きます。", "Claude Code is reading the pull request (a minute or more). It goes on if you open another one."))
+        .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.muted).spin(900))
+        .child(L("下調べ中", "Researching"));
+    }
+    if (!r) {
+      return button("b-research", L("下調べ", "Research"), `${L(`Claude Code に PR を読ませて、${what}を差分に挙げる。挙がったものはクリックで行コメントの下書きにできます。`, `Have Claude Code read the pull request and point out ${what} in the diff. Click one to make it a line-comment draft.`)}\n${L("モデル", "Model")}: ${this.config?.research?.model ?? RESEARCH_MODEL}（effort ${this.config?.research?.effort ?? RESEARCH_EFFORT}）${this.researchError ? `\n\n${this.researchError}` : ""}`,
+        false, (_e, cx) => { this.startResearch(cx); cx.notify(); });
+    }
+    const done = Object.keys(this.findingsDone()).length;
+    const tip = [
+      L(`${r.findings.length} 件のうち ${done} 件を下書きにしたか対応不要にしました（${new Date(r.at).toLocaleString("ja-JP")} に head ${r.sha.slice(0, 7)} を調べた結果）。`, `${done} of ${r.findings.length} drafted or dismissed (head ${r.sha.slice(0, 7)}, researched ${new Date(r.at).toLocaleString("en-US")}).`),
+      r.models?.length ? `${L("モデル", "Model")}: ${r.models.join(", ")}（effort ${r.effort}）` : null,
+      r.dropped ? L(`差分にない行を指した ${r.dropped} 件は除きました。`, `${r.dropped} pointing at lines outside the diff were left out.`) : null,
+      this.showResearch ? L("クリックで差分から隠す", "Click to hide them in the diff") : L("クリックで差分に出す", "Click to show them in the diff"),
+      L("Shift+クリックで調べ直す", "Shift+click to research again"),
+      this.researchError,
+    ].filter(Boolean).join("\n");
+    return button("b-research", `${L("下調べ", "Research")} ${done}/${r.findings.length}`, tip, this.showResearch, (e, cx) => {
+      if (e?.modifiers?.shift) this.startResearch(cx);
+      else { this.showResearch = !this.showResearch; save("show-research", this.showResearch); this.rebuild(); }
+      cx.notify();
+    });
   }
 
   // The files as a tree: folders in the order of their paths, a folder that holds only one folder
@@ -1973,23 +2102,26 @@ export default class PrReview extends View {
           .child(div().flex_1().min_w(0).truncate().child(`${users} · ${L(`${row.list.length} 件`, `${row.list.length} comment${row.list.length === 1 ? "" : "s"}`)}`))
           .child(div().flex_none().text_color(t.dim).child(row.open ? L("クリックで閉じる", "click to fold") : L("クリックで開く", "click to open"))));
     }
-    if (kind === "thread" || kind === "draft") {
+    if (kind === "finding-folded") {
+      const f = row.finding;
+      return h_flex().w_full().h(this.sizes[i]).flex_none().pl(58).py(4)
+        .child(h_flex().w(this.commentWidth()).flex_none().h_full().px(8).gap(6).items_center().rounded(8).border(1).border_color(t.border).bg(t.surface)
+          .text_size(11).text_color(t.muted)
+          .child(ico("chevron-right", 12, t.muted))
+          .child(div().flex_none().font_bold().child(row.how === "drafted" ? L("下書きにした", "Drafted") : L("対応不要にした", "Dismissed")))
+          .child(div().flex_1().min_w(0).truncate().child(f.title))
+          .child(div().flex_none().text_color(t.dim).child(L("クリックで開く", "click to open"))));
+    }
+    if (kind === "thread" || kind === "draft" || kind === "finding") {
+      if (kind === "finding") {
+        const f = row.finding, color = findingColor(f, t);
+        const who = `${L("下調べ", "Research")} · ${findingLabel(f, this.research?.mine)} · ${this.research?.mine ? L("クリックでセルフコメントの下書きにする", "click to draft a comment of your own") : L("クリックでコメントの下書きにする", "click to draft a comment")}`;
+        return this.commentBox(row, i, t, { who, color, title: color, bg: color + "14", indent: 0 });
+      }
       const mine = kind === "draft";
       const who = mine ? `${row.draft.reply ? L(`${row.draft.to ?? ""} への返信の下書き`, `Draft reply to ${row.draft.to ?? ""}`) : row.draft.startLine != null ? L(`${row.draft.startLine}〜${row.draft.line} 行への下書き`, `Draft on lines ${row.draft.startLine}–${row.draft.line}`) : L("下書き", "Draft")}${L("（未送信）・クリックで書き直す", " (not sent) · click to edit")}` : `${row.comment.user} · ${ago(row.comment.at)} · ${L("クリックで返信", "click to reply")}`;
-      const color = mine ? t.accent : t.input;
-      return h_flex().w_full().h(this.sizes[i]).flex_none().pl(mine && row.draft.reply ? 82 : 58).py(4)
-        .child(v_flex().w(this.commentWidth() - (mine && row.draft.reply ? 24 : 0)).flex_none().h_full().px(8).py(4).rounded(8).border(1).border_color(color).bg(mine ? t.accent + "14" : t.surface).overflow_hidden()
-          .child(div().h(18).flex_none().text_size(11).font_bold().text_color(mine ? t.accent : t.muted).child(who))
-          .children(row.lines.map((line) => div().flex().flex_row().flex_none().h(COMMENT_LINE).whitespace_nowrap().overflow_hidden()
-            .text_color(line.kind === "quote" ? t.muted : t.foreground)
-            .when(line.kind === "quote", (el) => el.border_l(2).border_color(t.input).pl(QUOTE_PAD - 2))
-            .when(line.kind === "code", (el) => el.bg(t.raised).px(6))
-            .when(line.indent > 0, (el) => el.child(div().w(line.indent).flex_none()))
-            .children(line.spans.length ? line.spans.map((sp) => div().flex_none()
-              .when(Boolean(sp.bold), (el) => el.font_bold())
-              .when(Boolean(sp.code), (el) => el.bg(t.raised).rounded(4).text_color(t.accent))
-              .when(Boolean(sp.badge), (el) => { const c = TAGS.find((x) => x.id === sp.badge)?.color ?? t.dim; return el.bg(c + "40").rounded(4).text_color(t.foreground).mr(4); })
-              .child(sp.text)) : [div().child(" ")]))));
+      const indent = mine && row.draft.reply ? 24 : 0;
+      return this.commentBox(row, i, t, mine ? { who, color: t.accent, title: t.accent, bg: t.accent + "14", indent } : { who, color: t.input, title: t.muted, bg: t.surface, indent });
     }
     return h_flex().w_full().h(ROW_H).flex_none().gap(12).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .when(this.inRange(row), (e) => e.bg(t.accent + "2e"))
@@ -1997,6 +2129,24 @@ export default class PrReview extends View {
       .child(div().w(40).flex_none().text_right().text_color(t.dim).child(row.number === undefined ? "" : String(row.number)))
       .child(div().w(8).flex_none().text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.dim).child(kind === "+" || kind === "-" ? kind : ""))
       .child(h_flex().flex_1().min_w(0).whitespace_nowrap().overflow_hidden().when(["+", "-", " "].includes(kind) && this.rows.length <= PLAIN_MAX, (e) => e.cursor_text()).children(this.codeLine(row.segs ?? [{ text: row.empty ? emptyText(row.empty) : row.text, kind: null }], t, this.selIn("one", i))));
+  }
+
+  // A comment, a draft or a finding in the diff: a box under its line, its heading and then its
+  // text as formatComment wrapped it. `indent` moves a reply in under what it answers.
+  commentBox(row, i, t, { who, color, title, bg, indent }) {
+    return h_flex().w_full().h(this.sizes[i]).flex_none().pl(58 + indent).py(4)
+      .child(v_flex().w(this.commentWidth() - indent).flex_none().h_full().px(8).py(4).rounded(8).border(1).border_color(color).bg(bg).overflow_hidden()
+        .child(div().h(18).flex_none().text_size(11).font_bold().text_color(title).truncate().child(who))
+        .children(row.lines.map((line) => div().flex().flex_row().flex_none().h(COMMENT_LINE).whitespace_nowrap().overflow_hidden()
+          .text_color(line.kind === "quote" ? t.muted : t.foreground)
+          .when(line.kind === "quote", (el) => el.border_l(2).border_color(t.input).pl(QUOTE_PAD - 2))
+          .when(line.kind === "code", (el) => el.bg(t.raised).px(6))
+          .when(line.indent > 0, (el) => el.child(div().w(line.indent).flex_none()))
+          .children(line.spans.length ? line.spans.map((sp) => div().flex_none()
+            .when(Boolean(sp.bold), (el) => el.font_bold())
+            .when(Boolean(sp.code), (el) => el.bg(t.raised).rounded(4).text_color(t.accent))
+            .when(Boolean(sp.badge), (el) => { const c = TAGS.find((x) => x.id === sp.badge)?.color ?? t.dim; return el.bg(c + "40").rounded(4).text_color(t.foreground).mr(4); })
+            .child(sp.text)) : [div().child(" ")]))));
   }
 
   // The bar over the diff: the shown file, and what can be done with it.
@@ -2078,6 +2228,8 @@ export default class PrReview extends View {
     if (row.kind === "draft") { this.startDraft(row.draft, row.index); return; }
     if (row.kind === "thread") { this.startReply(row); return; }
     if (row.kind === "resolved") { this.toggleResolved(row.root); return; }
+    if (row.kind === "finding") { this.startFinding(row.finding); return; }
+    if (row.kind === "finding-folded") { this.openFindings.add(row.finding.id); this.rebuild(); return; }
     const x = this.pressX;
     if (x == null) return;
     let name = null, word = null;
@@ -2139,6 +2291,7 @@ export default class PrReview extends View {
       .child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(L("この Mac に下書きとして保存します。「レビューを送信」するまで GitHub には出ません。", "Saved as a draft on this Mac. Nothing reaches GitHub until you submit the review.")))
         .when(c.index != null, (el) => el.child(button("draft-drop", L("削除", "Delete"), false, (_e, cx) => { this.dropDraft(c.index); cx.notify(); })))
+        .when(Boolean(c.finding), (el) => el.child(button("finding-dismiss", L("対応不要", "Dismiss"), false, (_e, cx) => { this.dismissFinding(c.finding); this.compose = null; this.rebuild(); cx.notify(); })))
         .child(button("draft-cancel", L("キャンセル", "Cancel"), false, (_e, cx) => { this.compose = null; cx.notify(); }))
         .child(button("draft-save", L("保存（⌘Enter）", "Save (⌘Enter)"), true, (_e, cx) => this.saveDraft(cx))));
   }

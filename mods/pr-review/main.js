@@ -213,11 +213,12 @@ const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const stop = (_e, cx) => cx.stop_propagation();
 // A finding of the research (research.js): its color, by how much it matters (by its kind when it was
 // researched before there were severities), and its name: the severity, then the kind. On your own
-// pull request an unexplained choice is a place to write the reason, on someone else's a question to ask.
+// pull request an unexplained choice is a place to write the reason, on someone else's a question to ask;
+// a supplement (your own only) is a comment of your own that points reviewers at the design document.
 const findingColor = (f, t) => (f.severity === "must" ? t.blocked : f.severity === "should" ? t.ansi4 : f.severity === "nit" ? t.muted : f.kind === "mismatch" ? t.blocked : t.ansi4);
 const findingLabel = (f, mine) => [
   f.severity === "nit" ? "nits" : f.severity,
-  f.kind === "mismatch" ? L("食い違い", "Mismatch") : mine ? L("説明を書く場所", "To explain") : L("説明がない", "Unexplained"),
+  f.kind === "mismatch" ? L("食い違い", "Mismatch") : f.kind === "supplement" ? L("補足", "Supplement") : mine ? L("説明を書く場所", "To explain") : L("説明がない", "Unexplained"),
 ].filter(Boolean).join(" · ");
 // Text as GitHub shows it: template comments are left out (and would otherwise swallow what follows them).
 const shownText = (text, max) => text.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, max);
@@ -1982,7 +1983,7 @@ export default class PrReview extends View {
     const pr = this.picked;
     const r = this.research;
     const what = pr.mine
-      ? L("食い違いと、理由をコメントで書いておくべき場所", "mismatches, and places whose reason should be written down")
+      ? L("食い違い、理由をコメントで書いておくべき場所、設計書や ADR から補足できる場所", "mismatches, places whose reason should be written down, and ones a design document or ADR explains")
       : L("食い違いと、理由が書かれていない場所", "mismatches, and choices whose reason isn't written down");
     if (this.researching.has(pr.url)) {
       return div().id("b-research").flex_none().px(8).h(24).flex().items_center().gap(6).rounded(8).text_size(12).bg(t.surface).text_color(t.muted).border(1).border_color(t.border)
@@ -2164,7 +2165,7 @@ export default class PrReview extends View {
         .child(h_flex().w(this.commentWidth()).flex_none().h_full().px(8).gap(6).items_center().rounded(8).border(1).border_color(t.border).bg(t.surface)
           .text_size(11).text_color(t.muted)
           .child(ico("chevron-right", 12, t.muted))
-          .child(div().flex_none().font_bold().child(row.how === "drafted" ? L("下書きにした", "Drafted") : row.how === "nit" ? L("下調べ · nits", "Research · nits") : L("対応不要にした", "Dismissed")))
+          .child(div().flex_none().font_bold().child(row.how === "drafted" ? L("下書きにした", "Drafted") : row.how === "nit" ? `${L("下調べ", "Research")} · ${findingLabel(f, this.research?.mine)}` : L("対応不要にした", "Dismissed")))
           .child(div().flex_1().min_w(0).truncate().child(f.title))
           .child(div().flex_none().text_color(t.dim).child(L("クリックで開く", "click to open"))));
     }

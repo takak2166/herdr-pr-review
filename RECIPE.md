@@ -109,13 +109,16 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   schema: findings of kind `mismatch` (code against the description, a design document or ADR, or
   other code) or `unexplained` (a choice whose reason is in no comment, not in the description and not
   in a design document or ADR: one written there counts as explained; when a linked document can't be
-  read, what it likely decides is not called unexplained), each with a `severity`
+  read, what it likely decides is not called unexplained), and on your own pull request only
+  `supplement` (a choice the code and the description don't explain but a design document or ADR does:
+  always `nit`, its comment ready to post, citing the section; any from someone else's pull request are
+  dropped), each with a `severity`
   (`must`: behaves wrongly once merged, even when it looks like a missing reason; `should`: disagrees
   with what is written or leaves a reader to guess; `nit`: nothing goes wrong if it stays), `path`,
   `line`, `title`, `points`, `sources` and a draft `comment`. Findings on lines the diff doesn't show
   are left out; the rest are kept most severe first. Each shows under its line as a box headed
   `下調べ · must · 食い違い`, red for must, blue for should, gray for nits (by kind, red for mismatch
-  and blue for unexplained, in research from before severities), with its grounds; nits start folded;
+  and blue for unexplained, in research from before severities), with its grounds; nits start folded, as one row headed `下調べ · nits · <kind>` (`補足` for a supplement);
   a click opens the comment box with the draft (on your own pull request a note of what to explain,
   otherwise a question, starting with the nits badge for a nit), where `対応不要` dismisses it. A finding with a draft made from it, or
   dismissed, folds to one row (deleting the draft brings it back). The button reads `下調べ n/m`
@@ -217,6 +220,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
 - On a pull request whose description links an ADR in another repository, the button's tip says
   `PR からリンクされた文書: 1 件を読みました`, and no reason the ADR gives is listed as unexplained.
+- On your own pull request linking an ADR, research lists `nits · 補足` findings whose comment cites
+  the ADR's section.
 - `全部コピー` puts every finding on the clipboard, each starting with its `path:line`, musts first.
 - A `nit` finding shows as one folded row; a `must` one is red and counted in the header button.
 - A file with a `must` finding shows `must 1` in red in the tree; drafting it changes the badge.

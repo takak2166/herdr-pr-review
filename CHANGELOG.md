@@ -9,6 +9,9 @@ with a GitHub release. To update, see [Updating](README.md#updating).
   `.md`, `.txt`, `.adoc`, `.rst` and the like, up to five, through `gh`), since Claude Code sees only
   the pull request's repository. A reason a design document or ADR gives counts as explained and is
   no longer asked for. The research button's tip says how many were read.
+- On your own pull request, research also lists supplements (`補足`): choices the code and the
+  description don't explain but a design document or ADR does. Each comes as a comment ready to post,
+  citing the document's section, ranked as a nit and folded with them (`下調べ · nits · 補足`).
 
 ## v0.5.0 — 2026-11-27
 

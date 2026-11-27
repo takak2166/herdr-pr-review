@@ -1,9 +1,12 @@
-// Research ("下調べ"): Claude Code reads a pull request before you do and points at two kinds of
+// Research ("下調べ"): Claude Code reads a pull request before you do and points at kinds of
 // place in its diff, each as a candidate for a line comment, not as an explanation of the code:
 //   mismatch     the code disagrees with the PR's description, a design document or ADR, or
 //                another part of the code
 //   unexplained  a choice a reader will ask "why" about, whose reason is in no code comment, nor
 //                the description, nor a design document or ADR
+//   supplement   (your own pull request only) a choice the code and the description don't explain
+//                but a design document or ADR does: a comment of your own can tell reviewers so,
+//                and the finding's comment is that comment, citing the document
 // The explaining is the author's to do, in code comments or comments on their own pull request:
 // on someone else's pull request a finding becomes a question to them, on your own a reminder of
 // what to explain. Claude Code runs headless in the head commit's files (research.sh) with only the
@@ -38,6 +41,7 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // behaves but disagrees with what is written or leaves a reader to guess, `nit` nothing goes wrong
 // if it stays. The kind says what sort of place it is; this says which to read first.
 export const SEVERITIES = ["must", "should", "nit"];
+const KINDS = ["mismatch", "unexplained", "supplement"];
 // A finding's place in that order; one researched before there were severities goes last.
 export const severityRank = (f) => { const k = SEVERITIES.indexOf(f.severity); return k < 0 ? SEVERITIES.length : k; };
 
@@ -49,7 +53,7 @@ const SCHEMA = {
       items: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["mismatch", "unexplained"] },
+          kind: { type: "string", enum: KINDS },
           severity: { type: "string", enum: SEVERITIES },
           path: { type: "string", description: "The file's path in the repository, as in the diff." },
           line: { type: "integer", description: "A line number of the file after the change, on an added or unchanged line shown in the diff." },
@@ -128,16 +132,16 @@ ${body || "（本文なし）"}${linked}
 ${cut}
 
 ## やること
-差分の中から、次の 2 種類の場所を探してください。
+差分の中から、次の${mine ? " 3 " : " 2 "}種類の場所を探してください。
 - mismatch: コードが、PR の本文・設計書や ADR（リポジトリにあるものと、PR からリンクされたもの）・コードのほかの場所と食い違っているところ。例: 設計書の条件と実装の条件が違う、同じ値がほかの場所にもあって片方だけ変わっている、検査を通らない経路がある。
-- unexplained: 読み手が「なぜこうしたのか」と疑問に思う選択で、その理由がコードのコメントにも、PR の本文にも、設計書や ADR（リポジトリにあるものと、PR からリンクされたもの）にも書かれていないところ。例: 根拠の分からない数値、珍しい条件、消した振る舞い、回避策。
+- unexplained: 読み手が「なぜこうしたのか」と疑問に思う選択で、その理由がコードのコメントにも、PR の本文にも、設計書や ADR（リポジトリにあるものと、PR からリンクされたもの）にも書かれていないところ。例: 根拠の分からない数値、珍しい条件、消した振る舞い、回避策。${mine ? "\n- supplement: コードや PR の本文からは読み取れないが、設計書や ADR には理由や前提が書いてあるところ。レビューする人が設計書を開かなくても分かるよう、セルフコメントで補足する候補。レビューの助けになるものだけを挙げ、severity は nit にする。" : ""}
 
-設計書や ADR は、上の「PR からリンクされた文書」と、リポジトリの docs/・adr/・design.md・README・CLAUDE.md などを Grep や Glob で探して読んでください。設計書や ADR に理由が書いてあれば、それで説明は足りています。コードのコメントや PR で書き直すことを求めないでください。${unread ? "\n\n読めなかった文書があります。その文書で決めていそうなこと（設定値・時刻・回数・方式の理由など）は、unexplained にしないでください。" : ""}
+設計書や ADR は、上の「PR からリンクされた文書」と、リポジトリの docs/・adr/・design.md・README・CLAUDE.md などを Grep や Glob で探して読んでください。設計書や ADR に理由が書いてあれば、それで説明は足りています。コードのコメントや PR で書き直すことを求めないでください${mine ? "（unexplained にはせず、レビューの助けになるなら supplement にする）" : ""}。${unread ? "\n\n読めなかった文書があります。その文書で決めていそうなこと（設定値・時刻・回数・方式の理由など）は、unexplained にしないでください。" : ""}
 
-書かないもの: 書き方の好み、一般論の助言、コードがしていることの言い換え、すでにコメント・本文・設計書や ADR で説明されていること。見つからなければ findings は空で構いません。多くても ${MAX_FINDINGS} 件、must・should・nit の順に。
+書かないもの: 書き方の好み、一般論の助言、コードがしていることの言い換え、すでにコメント・本文・設計書や ADR で説明されていること${mine ? "（supplement を除く）" : ""}。見つからなければ findings は空で構いません。多くても ${MAX_FINDINGS} 件、must・should・nit の順に。
 
 ## 重さ（severity）
-種類（mismatch か unexplained か）とは別に、どれだけ重いかを選んでください。
+種類（mismatch・unexplained${mine ? "・supplement" : ""}）とは別に、どれだけ重いかを選んでください。
 - must: マージすると動きが誤るもの。結果やデータが間違う、エラーになる、たどり着けない値や経路がある、同じ直しが要る場所の直し漏れ。理由が書かれていないだけに見えても、動きが誤るなら must。
 - should: 動きは正しいが、PR の本文・設計書・コードのコメントと実装が食い違うもの、理由が書かれておらず読み手が誤解しそうなもの。
 - nit: 直さなくても誰も困らないもの。名前、テストの重複や置き場所、リンクや参照の書き漏れ。
@@ -145,10 +149,10 @@ ${cut}
 ## 各項目の書き方
 - path と line: 差分の中にある、変更後のファイルの行（追加された行か、差分に表示されている変更のない行）の行番号。削除された行は指せません。
 - title: 1 行の見出し。
-- points: 何が問題か・何が書かれていないかを、2〜3 個の短い文で。
-- sources: 根拠にした場所。「PR 本文」「docs/adr/00057-xxx.md「再検討する条件」」「pkg/foo/bar.go:120」のように、ファイルは節や行まで書く。リンクされた文書は「owner/repo docs/adr/xxx.md「節」」のように。unexplained で根拠がないときは、探したが説明が見つからなかった場所。
+- points: 何が問題か・何が書かれていないかを${mine ? "（supplement では、コードから読み取れないことと、文書に書いてあること）" : ""}、2〜3 個の短い文で。
+- sources: 根拠にした場所。supplement では、理由が書いてある設計書や ADR の節。「PR 本文」「docs/adr/00057-xxx.md「再検討する条件」」「pkg/foo/bar.go:120」のように、ファイルは節や行まで書く。リンクされた文書は「owner/repo docs/adr/xxx.md「節」」のように。unexplained で根拠がないときは、探したが説明が見つからなかった場所。
 - comment: ${mine
-      ? "この PR の作者（本人）が、ここに何を書き足すべきかのメモ。「〜の理由をコードコメントで書く」「〜をセルフコメントで補足する」のように、書くべき内容を具体的に。理由そのものを推測で書かないこと。"
+      ? "mismatch と unexplained では、この PR の作者（本人）が、ここに何を書き足すべきかのメモ。「〜の理由をコードコメントで書く」「〜をセルフコメントで補足する」のように、書くべき内容を具体的に。理由そのものを推測で書かないこと。supplement では、そのまま PR に載せるセルフコメントの文面。設計書や ADR のどの節に書いてあるか（リンクされた文書なら、その URL も）と、その要点を 1〜3 文で。文書に書かれていないことを足さないこと。"
       : "作者に送る行コメントの下書き。丁寧な日本語で、質問か確認の形にする。答えを決めつけないこと。"}
 
 日本語で書いてください。`,
@@ -165,16 +169,16 @@ ${body || "(no description)"}${linked}
 ${cut}
 
 ## What to do
-Find two kinds of place in the diff:
+Find ${mine ? "three" : "two"} kinds of place in the diff:
 - mismatch: the code disagrees with the description, a design document or ADR (in the repository, or linked from the description), or another part of the code. E.g. a condition differs from the design document's, a value also defined elsewhere changed in one place only, a path that skips a check.
-- unexplained: a choice a reader will ask "why" about whose reason is in no code comment, nor the description, nor a design document or ADR (in the repository, or linked from the description). E.g. a number with no stated origin, an unusual condition, removed behavior, a workaround.
+- unexplained: a choice a reader will ask "why" about whose reason is in no code comment, nor the description, nor a design document or ADR (in the repository, or linked from the description). E.g. a number with no stated origin, an unusual condition, removed behavior, a workaround.${mine ? "\n- supplement: a choice the code and the description don't explain but a design document or ADR does. A candidate for a comment of the author's own on the pull request, so reviewers needn't open the document. Only ones that help the review; severity nit." : ""}
 
-Read the documents linked from the description above, and look for design documents and ADRs in the repository with Grep and Glob (docs/, adr/, design.md, README, CLAUDE.md, ...). A reason written in a design document or ADR is explanation enough: don't ask for it again in a code comment or on the pull request.${unread ? "\n\nSome documents could not be read. Don't call unexplained what they are likely to decide (the reasons for settings, times, counts, approaches)." : ""}
+Read the documents linked from the description above, and look for design documents and ADRs in the repository with Grep and Glob (docs/, adr/, design.md, README, CLAUDE.md, ...). A reason written in a design document or ADR is explanation enough: don't ask for it again in a code comment or on the pull request${mine ? " (not unexplained; a supplement, when it helps the review)" : ""}.${unread ? "\n\nSome documents could not be read. Don't call unexplained what they are likely to decide (the reasons for settings, times, counts, approaches)." : ""}
 
-Leave out: style preferences, general advice, restating what the code does, anything already explained in comments, the description, or a design document or ADR. An empty list is fine. At most ${MAX_FINDINGS}: must first, then should, then nit.
+Leave out: style preferences, general advice, restating what the code does, anything already explained in comments, the description, or a design document or ADR${mine ? " (but for supplement)" : ""}. An empty list is fine. At most ${MAX_FINDINGS}: must first, then should, then nit.
 
 ## Severity
-Apart from the kind (mismatch or unexplained), say how much it matters:
+Apart from the kind (mismatch, unexplained${mine ? ", supplement" : ""}), say how much it matters:
 - must: the code behaves wrongly once merged. Wrong results or data, an error, a value or path that can't be reached, a place left unfixed that needed the same fix. If it behaves wrongly it is must, even when it looks like a missing reason.
 - should: it behaves, but disagrees with the description, a design document or a code comment, or its reason is missing where a reader is likely to get it wrong.
 - nit: nobody is hurt if it stays. Names, duplicated or misplaced tests, a missing link or reference.
@@ -182,10 +186,10 @@ Apart from the kind (mismatch or unexplained), say how much it matters:
 ## Each finding
 - path and line: a line of the file after the change that the diff shows (added, or unchanged context). Removed lines can't be pointed at.
 - title: a one-line heading.
-- points: two or three short sentences on what is wrong or missing.
-- sources: where the grounds are: "the description", "docs/adr/00057-xxx.md 'When to revisit'", "pkg/foo/bar.go:120", files down to the section or line; a linked document as "owner/repo docs/adr/xxx.md 'Section'". For unexplained with no grounds, where you looked and found no reason.
+- points: two or three short sentences on what is wrong or missing${mine ? " (for supplement, what the code doesn't show and what the document says)" : ""}.
+- sources: where the grounds are (for supplement, the section of the design document or ADR that gives the reason): "the description", "docs/adr/00057-xxx.md 'When to revisit'", "pkg/foo/bar.go:120", files down to the section or line; a linked document as "owner/repo docs/adr/xxx.md 'Section'". For unexplained with no grounds, where you looked and found no reason.
 - comment: ${mine
-      ? "a note for the author (the person using this screen) on what to add here: \"explain why … in a code comment\", \"add a comment on the pull request about …\". Say what to explain; don't guess the reason."
+      ? "for mismatch and unexplained, a note for the author (the person using this screen) on what to add here: \"explain why … in a code comment\", \"add a comment on the pull request about …\". Say what to explain; don't guess the reason. For supplement, the author's own comment, ready to post: which section of which document gives the reason (its URL, for a linked one) and the gist in one to three sentences. Add nothing the document doesn't say."
       : "a draft line comment to the author, polite, as a question or a check. Don't presume the answer."}
 
 Write in English.`);
@@ -215,7 +219,7 @@ export async function runResearch(pr, { body, diff, files, mine, model = RESEARC
   if (out.is_error || !out.structured_output) throw new Error(`Claude Code: ${String(out.result ?? out.subtype ?? "no answer").slice(0, 200)}`);
   const shown = (f) => files.some((x) => x.path === f.path && x.rows.some((row) => row.side === "RIGHT" && row.line === f.line));
   // Most severe first, in Claude Code's order within each (the sort keeps it).
-  const all = (out.structured_output.findings ?? []).slice(0, MAX_FINDINGS).sort((a, b) => severityRank(a) - severityRank(b));
+  const all = (out.structured_output.findings ?? []).filter((f) => mine || f.kind !== "supplement").slice(0, MAX_FINDINGS).sort((a, b) => severityRank(a) - severityRank(b));
   const findings = all.filter(shown).map((f, i) => ({ ...f, id: `${i}-${f.path}:${f.line}` }));
   const kept = { sha: pr.sha, at: new Date().toISOString(), mine, findings, dropped: all.length - findings.length, cost: out.total_cost_usd ?? null, model, effort, models: Object.keys(out.modelUsage ?? {}), docs: docs.map((d) => ({ url: d.url, read: !d.error })) };
   await fs.writeFile(fileOf(pr), JSON.stringify(kept, null, 2));

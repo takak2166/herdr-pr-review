@@ -11,6 +11,11 @@ const untab = (line) => {
 
 // Files a tool writes (generated code, lock files, API descriptions, snapshots): listed last, dimmed.
 const isGenerated = (path) => /(^|\/)(__generated__|generated|gen)\/|\.pb\.go$|\.pb\.gw\.go$|\.gen\.\w+$|_gen\.go$|\.generated\.\w+$|(^|\/)mocks?\/mock\.go$|(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|go\.sum|Cargo\.lock|mise\.lock|actions\.lock)$|swagger\.json$|openapi\.(json|ya?ml)$|\.snap$|\.msw\.ts$/.test(path);
+// Test code and its data (Go's _test.go and testdata/, JS's .test/.spec, folders of tests, Python's
+// test_*.py, Ruby's _spec.rb, Java's and Kotlin's *Test): listed after the code they test.
+const isTest = (path) => /_test\.go$|(^|\/)(testdata|__tests__|tests?|e2e)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$|_spec\.rb$|Tests?\.(java|kt)$/.test(path);
+// Which group of the tree a file is in, in order: the code, its tests, what a tool wrote.
+const group = (f) => (f.generated ? 2 : f.test ? 1 : 0);
 
 /** The order a file tree shows paths in: folder by folder, a folder's subfolders before its files,
  *  each by name. */
@@ -45,8 +50,8 @@ function unquote(path) {
 // The two paths of a file's first line, either of which may be quoted.
 const FILE_START = /^diff --git ("a\/(?:[^"\\]|\\.)*"|a\/.*?) ("b\/(?:[^"\\]|\\.)*"|b\/.*)$/;
 
-/** A unified diff as `{ files }`, in tree order with generated files last. A file is
- *  `{ path, from, renamed, added, deleted, generated, add, del, rows }`; a row is
+/** A unified diff as `{ files }`, in tree order with tests after the code and generated files last.
+ *  A file is `{ path, from, renamed, added, deleted, generated, test, add, del, rows }`; a row is
  *  `{ kind, text, path, number?, side?, line?, empty? }` with kind "file", "@", "+", "-", " " or "".
  *  `side` and `line` are where GitHub puts a comment on that row; `empty` ("renamed" or "binary")
  *  stands in for a file with no lines, for the screen to say why in its own words. */
@@ -80,10 +85,11 @@ export function parseDiff(text) {
   }
   for (const f of files) {
     f.generated = isGenerated(f.path);
+    f.test = !f.generated && isTest(f.path);
     // A file with no lines to show says why, instead of standing empty (`empty` is what to say, in the screen's words).
     if (f.rows.length === 0) f.rows.push({ kind: "", path: f.path, text: "", empty: f.renamed ? "renamed" : "binary" });
   }
-  // Files are read as a tree shows them, the generated ones last.
-  files.sort((a, b) => Number(a.generated) - Number(b.generated) || treeOrder(a.path, b.path));
+  // Files are read as a tree shows them: the code, then its tests, then the generated ones.
+  files.sort((a, b) => group(a) - group(b) || treeOrder(a.path, b.path));
   return { files };
 }

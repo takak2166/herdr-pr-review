@@ -12,6 +12,9 @@ with a GitHub release. To update, see [Updating](README.md#updating).
   pull request starts with the nits badge.
 - The file tree badges each file that has findings left (not drafted or dismissed): how many,
   colored by the most severe (`must 1` in red).
+- Test files (`_test.go`, `testdata/`, `.test.ts`, `.spec.js`, `test_*.py`, `_spec.rb`, `*Test.java`
+  and others) are grouped under `Tests` in a tree of their own, after the code and before the
+  generated files, not dimmed. Next and previous file go in the same order.
 
 ## v0.4.0 — 2026-11-26
 

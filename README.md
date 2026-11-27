@@ -3,7 +3,7 @@
 A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本語](README.ja.md)
 
 - Your pull requests and review requests, grouped by what to do next: To review, To fix, Waiting, Watching
-- The diff file by file, from a folder tree, with syntax colors (unified or split), and GitHub's Viewed marks
+- The diff file by file, from a folder tree (tests and generated files grouped after the code), with syntax colors (unified or split), and GitHub's Viewed marks
 - Line and multi-line comments and replies, drafted locally and submitted as one review; resolved threads stay folded until clicked
 - A preview of Markdown files: press a block (heading, paragraph, list item, table, quote, code) to comment on its lines; Mermaid diagrams drawn as SVG, enlarged with a click and dragged about
 - A code view of the head commit: go to definition (F12), find uses (Shift+F12; for Go by type with gopls, across gRPC services), blame of the current line, search (Cmd+F or Ctrl+F), text selection, a second column side by side (Cmd+click a file)

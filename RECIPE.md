@@ -33,7 +33,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
    a click; a folder holding one folder is joined with it), then files: a Viewed checkbox, the name,
    `Added` / `Deleted` / `Renamed`, the count of comments on it, a research badge (findings not
    drafted or dismissed, colored by the most severe: `must n` in red, else the count in blue or
-   gray; hidden while the research is hidden), a pencil, `+add −del`. Generated files
+   gray; hidden while the research is hidden), a pencil, `+add −del`. Tests (`_test.go`, `testdata/`,
+   `tests/`, `__tests__/`, `e2e/`, `.test.ts`, `.spec.js`, `test_*.py`, `_spec.rb`, `*Test.java`) next
+   under `Tests`, in a tree of their own (its folders fold apart from the code's), not dimmed. Generated files
    (generated code, lock files, API descriptions, snapshots, mocks) last under `Generated`, dimmed,
    by their whole path.
 4. **The diff**, one file at a time. A bar: `Prev` / `Next`, the path, tags, a hint or the marked
@@ -130,7 +132,7 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - `mods/pr-review/`: `main.js` (the view; roles `main` and `chat-head`), `i18n.js` (`L(ja, en)` and
   the Mac's language), `github.js` (`gh`: GraphQL search, `gh pr view` / `diff` with a per-file
   fallback for very large pull requests, review comments, Viewed marks, `submitReview`), `diff.js`
-  (unified diff → rows; quoted and non-ASCII paths; tree order, generated files last), `highlight.js`
+  (unified diff → rows; quoted and non-ASCII paths; tree order, then tests, generated files last), `highlight.js`
   (a small per-language tokenizer), `code.js` (files, definitions, uses, blame from the local clone
   with `git show` / `git grep` / `git blame`), `tree.sh` (the head commit taken out of the clone's
   git objects into a cache folder, the five most recent kept), `research.js` and `research.sh` (the research: the
@@ -208,4 +210,5 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - `全部コピー` puts every finding on the clipboard, each starting with its `path:line`, musts first.
 - A `nit` finding shows as one folded row; a `must` one is red and counted in the header button.
 - A file with a `must` finding shows `must 1` in red in the tree; drafting it changes the badge.
+- `errors_test.go` shows under `Tests`, after `errors.go`; Next file goes from one to the other.
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

@@ -2015,12 +2015,12 @@ export default class PrReview extends View {
   }
 
   // The files as a tree: folders in the order of their paths, a folder that holds only one folder
-  // joined with it on one line (as editors do), its subfolders before its files. Generated files
-  // come last, dimmed, by their whole path. A folder folds when its line is pressed.
-  fileTree() {
+  // joined with it on one line (as editors do), its subfolders before its files. The code and its
+  // tests are trees of their own (`files`); generated files come last, dimmed, by their whole path.
+  // A folder folds when its line is pressed, in its own tree only (`key` names it in this.folded).
+  fileTree(files, prefix = "") {
     const root = { dirs: new Map(), files: [] };
-    for (const f of this.files) {
-      if (f.generated) continue;
+    for (const f of files) {
       const parts = f.path.split("/");
       let at = root;
       for (const dir of parts.slice(0, -1)) { if (!at.dirs.has(dir)) at.dirs.set(dir, { dirs: new Map(), files: [] }); at = at.dirs.get(dir); }
@@ -2031,8 +2031,8 @@ export default class PrReview extends View {
       for (const [name, sub] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
         let label = name, full = path ? `${path}/${name}` : name, at = sub;
         while (at.files.length === 0 && at.dirs.size === 1) { const [n, s] = [...at.dirs][0]; label += `/${n}`; full += `/${n}`; at = s; }
-        out.push({ dir: full, label, depth });
-        if (!this.folded.has(full)) walk(at, full, depth + 1);
+        out.push({ dir: full, key: prefix + full, label, depth });
+        if (!this.folded.has(prefix + full)) walk(at, full, depth + 1);
       }
       for (const f of node.files) out.push({ file: f, depth });
     };
@@ -2091,19 +2091,26 @@ export default class PrReview extends View {
     };
     const dirRow = (d, i) => h_flex().id(`d-${i}-${d.dir}`).h(22).flex_none().pl(4 + d.depth * 12).pr(8).gap(4).items_center().rounded(4).text_size(12).text_color(t.muted)
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(d.dir)
-      .on_click((_e, cx) => { if (this.folded.has(d.dir)) this.folded.delete(d.dir); else this.folded.add(d.dir); cx.notify(); })
-      .child(ico(this.folded.has(d.dir) ? "chevron-right" : "chevron-down", 12, t.dim))
+      .on_click((_e, cx) => { if (this.folded.has(d.key)) this.folded.delete(d.key); else this.folded.add(d.key); cx.notify(); })
+      .child(ico(this.folded.has(d.key) ? "chevron-right" : "chevron-down", 12, t.dim))
       .child(div().min_w(0).truncate().child(`${d.label}/`));
-    const tree = this.fileTree();
+    const tree = this.fileTree(this.files.filter((f) => !f.generated && !f.test));
+    const tests = this.fileTree(this.files.filter((f) => f.test), "test:");
+    const testCount = this.files.filter((f) => f.test).length;
     const generated = this.files.filter((f) => f.generated);
+    // A group's heading: what follows is tests, or what a tool wrote.
+    const heading = (label, tip) => div().flex_none().px(6).pt(10).pb(2).text_size(11).font_medium().text_color(t.dim).tooltip(tip).child(label);
     return v_flex().w(this.widths.files).flex_none().min_h(0)
       .child(h_flex().h(28).flex_none().px(12).gap(8).items_center().text_size(11).text_color(t.dim).border_b(1).border_color(t.border)
         .child(div().tooltip(L("GitHub の Viewed の印", "GitHub's Viewed marks")).child(`${L("確認済み", "Viewed")} ${read} / ${this.files.length}`)))
       .child(v_flex().id("files-scroll").flex_1().min_h(0).p(4).overflow_y_scrollbar()
         .children(tree.map((x, i) => (x.dir ? dirRow(x, i) : fileRow(x.file, i, x.depth, false))))
+        .when(testCount > 0, (el) => el
+          .child(heading(`${L("テスト", "Tests")} ${testCount}`, L("テストのコードとデータ（_test.go・testdata/・.test.ts・.spec.ts など）", "Test code and data (_test.go, testdata/, .test.ts, .spec.ts, ...)")))
+          .children(tests.map((x, k) => (x.dir ? dirRow(x, tree.length + k) : fileRow(x.file, tree.length + k, x.depth, false)))))
         .when(generated.length > 0, (el) => el
-          .child(div().flex_none().px(6).pt(10).pb(2).text_size(11).font_medium().text_color(t.dim).tooltip(L("ツールが書いたファイル（生成コード・ロックファイル・API 定義・スナップショットなど）", "Files a tool writes (generated code, lock files, API descriptions, snapshots)")).child(`${L("自動生成", "Generated")} ${generated.length}`))
-          .children(generated.map((f, k) => fileRow(f, tree.length + k, 0, true)))));
+          .child(heading(`${L("自動生成", "Generated")} ${generated.length}`, L("ツールが書いたファイル（生成コード・ロックファイル・API 定義・スナップショットなど）", "Files a tool writes (generated code, lock files, API descriptions, snapshots)")))
+          .children(generated.map((f, k) => fileRow(f, tree.length + tests.length + k, 0, true)))));
   }
 
   diffRow(row, i, t) {

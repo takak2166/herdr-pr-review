@@ -2046,11 +2046,18 @@ export default class PrReview extends View {
     // How many comments GitHub has on each file's lines: the diff shows one file, so the list says where the talk is.
     const talks = new Map();
     for (const c of this.detail?.threads ?? []) if (!c.outdated && c.line != null) talks.set(c.path, (talks.get(c.path) ?? 0) + 1);
+    // The research's findings on each file not yet drafted or dismissed, most severe first, while
+    // they are shown in the diff: where to read first.
+    const handled = this.findingsDone();
+    const found = new Map();
+    for (const f of this.showResearch ? this.research?.findings ?? [] : []) if (!handled[f.id]) found.set(f.path, [...(found.get(f.path) ?? []), f]);
+    for (const list of found.values()) list.sort((a, b) => severityRank(a) - severityRank(b));
     const fileRow = (f, i, depth, whole) => {
       const viewed = this.isViewed(f);
       const name = whole ? f.path : f.path.split("/").pop();
       const shown = (this.view === "code" ? this.code?.path : this.file) === f.path;
       const talk = talks.get(f.path) ?? 0;
+      const finds = found.get(f.path) ?? [];
       return h_flex().id(`f-${i}-${f.path}`).h(24).flex_none().pl(4 + depth * 12).pr(8).gap(6).items_center().rounded(4).text_size(12)
         .when(shown, (el) => el.bg(t.selected))
         .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`${f.path}\n${this.view === "code" ? L("クリックで開く・Cmd+クリックで右の列に並べて開く", "Click to open · Cmd+click to open beside, in a right column") : L("クリックでこのファイルを開く", "Click to open this file")}`)
@@ -2069,6 +2076,15 @@ export default class PrReview extends View {
         .when(f.deleted, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi1).child(L("削除", "Deleted"))))
         .when(f.renamed && f.add + f.del === 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(L("名前の変更", "Renamed"))))
         .when(talk > 0, (el) => el.child(div().id(`talk-${i}`).flex_none().px(4).h(15).flex().items_center().rounded(8).bg(t.raised).text_size(11).text_color(t.muted).tooltip(L(`行コメント ${talk} 件`, `${talk} line comment(s)`)).child(String(talk))))
+        .when(finds.length > 0, (el) => {
+          // Colored by the most severe; the tip says how many of each.
+          const color = findingColor(finds[0], t);
+          const each = [...new Set(finds.map((x) => findingLabel(x, this.research?.mine)))].map((label) => `${label} ${finds.filter((x) => findingLabel(x, this.research?.mine) === label).length}`);
+          return el.child(h_flex().id(`find-${i}`).flex_none().px(4).h(15).gap(3).items_center().rounded(8).bg(color + "26").border(1).border_color(color + "66").text_size(11).text_color(color)
+            .tooltip(`${L(`下調べ ${finds.length} 件（下書きにも対応不要にもしていないもの）`, `${finds.length} finding(s) not drafted or dismissed`)}\n${each.join("\n")}`)
+            .child(ico("circle-help", 10, color))
+            .child(finds[0].severity === "must" ? `must ${finds.filter((x) => x.severity === "must").length}` : String(finds.length)));
+        })
         .when(drafted.has(f.path), (el) => el.child(ico("pencil", 12, t.accent)))
         .when(f.add > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${f.add}`)))
         .when(f.del > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));

@@ -10,6 +10,8 @@ with a GitHub release. To update, see [Updating](README.md#updating).
   colored and headed by it, kept and copied most severe first, nits folded at first, the header
   button puts the musts left first (`下調べ must 2 · 0/7`), and a draft from a nit on someone else's
   pull request starts with the nits badge.
+- The file tree badges each file that has findings left (not drafted or dismissed): how many,
+  colored by the most severe (`must 1` in red).
 
 ## v0.4.0 — 2026-11-26
 

@@ -31,7 +31,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
    `Open on GitHub` (solid). `Ask Claude` opens a row of question chips and an input.
 3. **The files** (250px; 160–560): `Viewed N / M` over a tree. Folders (chevron, `name/`, folded by
    a click; a folder holding one folder is joined with it), then files: a Viewed checkbox, the name,
-   `Added` / `Deleted` / `Renamed`, the count of comments on it, a pencil, `+add −del`. Generated files
+   `Added` / `Deleted` / `Renamed`, the count of comments on it, a research badge (findings not
+   drafted or dismissed, colored by the most severe: `must n` in red, else the count in blue or
+   gray; hidden while the research is hidden), a pencil, `+add −del`. Generated files
    (generated code, lock files, API descriptions, snapshots, mocks) last under `Generated`, dimmed,
    by their whole path.
 4. **The diff**, one file at a time. A bar: `Prev` / `Next`, the path, tags, a hint or the marked
@@ -205,4 +207,5 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
 - `全部コピー` puts every finding on the clipboard, each starting with its `path:line`, musts first.
 - A `nit` finding shows as one folded row; a `must` one is red and counted in the header button.
+- A file with a `must` finding shows `must 1` in red in the tree; drafting it changes the badge.
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

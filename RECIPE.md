@@ -103,9 +103,13 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   opens on it and the question is sent into it (`hc send`, which waits for an unsent draft).
 - **Research** (`下調べ` in the header, or `pr-review.research`): Claude Code (`claude -p`, Read / Grep /
   Glob only, model and effort from `config.json`'s `research`, default `opus` / `high`) reads the head
-  commit's files with the description and the diff, and answers in a JSON schema: findings of kind
-  `mismatch` (code against the description, a design document or ADR, or other code) or `unexplained`
-  (a choice whose reason is in no comment and not in the description), each with a `severity`
+  commit's files with the description, the diff and the documents the description links to on GitHub
+  (`github.com/<owner>/<repo>/blob/<ref>/<path>` ending in `.md`, `.markdown`, `.mdx`, `.txt`, `.adoc` or
+  `.rst`: the first five, 40000 characters each, read with `gh api` beforehand), and answers in a JSON
+  schema: findings of kind `mismatch` (code against the description, a design document or ADR, or
+  other code) or `unexplained` (a choice whose reason is in no comment, not in the description and not
+  in a design document or ADR: one written there counts as explained; when a linked document can't be
+  read, what it likely decides is not called unexplained), each with a `severity`
   (`must`: behaves wrongly once merged, even when it looks like a missing reason; `should`: disagrees
   with what is written or leaves a reader to guess; `nit`: nothing goes wrong if it stays), `path`,
   `line`, `title`, `points`, `sources` and a draft `comment`. Findings on lines the diff doesn't show
@@ -116,7 +120,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   otherwise a question, starting with the nits badge for a nit), where `対応不要` dismisses it. A finding with a draft made from it, or
   dismissed, folds to one row (deleting the draft brings it back). The button reads `下調べ n/m`
   (handled / all), led by the musts not yet handled (`下調べ must 2 · 0/7`): a press shows or hides the findings, Shift+press asks again. The answer is kept
-  per head commit in `data/pr-review/research/`, with the models that answered.
+  per head commit in `data/pr-review/research/`, with the models that answered and the linked
+  documents (the button's tip says how many were read).
   `コピー` on a box (only where rows can hold controls: files of up to 1500 rows), `下調べをコピー` in
   the comment box opened from one, and `全部コピー` in the header copy findings as text, most severe
   first: `path:line [severity · kind] title`, its points, its grounds; all of them start with the
@@ -182,6 +187,9 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - `claude -p --json-schema` puts the answer in `structured_output`; `modelUsage` names the models.
   The extracted tree is not a trusted workspace, so Claude Code ignores the repository's own
   `.claude/settings.json` permissions there (only reading tools are given anyway).
+- An ADR is often in another repository (the service's, linked from a deployment repository's pull
+  request). Claude Code runs in this repository's files and can't open the link, so the research reads
+  linked documents first; without them it asked again for reasons the ADR gives.
 - A finding's box is a row of the diff list: like comments, it is wrapped ahead of time and pressing
   it goes through `pressRow`.
 - Assumes macOS (`defaults`, `dscl`, `~/Library/Caches/herdr-pr-review` for gopls trees) and clones
@@ -207,6 +215,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - A resolved thread shows as one `Resolved` row; a click opens it.
 - `下調べ` on a pull request shows findings under lines of the diff and `下調べ 0/n` in the header;
   a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
+- On a pull request whose description links an ADR in another repository, the button's tip says
+  `PR からリンクされた文書: 1 件を読みました`, and no reason the ADR gives is listed as unexplained.
 - `全部コピー` puts every finding on the clipboard, each starting with its `path:line`, musts first.
 - A `nit` finding shows as one folded row; a `must` one is red and counted in the header button.
 - A file with a `must` finding shows `must 1` in red in the tree; drafting it changes the badge.

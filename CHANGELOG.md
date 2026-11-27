@@ -3,6 +3,13 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## Unreleased
+
+- Research reads the documents the description links to on GitHub (an ADR in another repository:
+  `.md`, `.txt`, `.adoc`, `.rst` and the like, up to five, through `gh`), since Claude Code sees only
+  the pull request's repository. A reason a design document or ADR gives counts as explained and is
+  no longer asked for. The research button's tip says how many were read.
+
 ## v0.5.0 — 2026-11-27
 
 - Research findings are ranked `must` (the code behaves wrongly once merged), `should` (it disagrees

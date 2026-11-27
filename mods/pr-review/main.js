@@ -2002,6 +2002,7 @@ export default class PrReview extends View {
       L(`${r.findings.length} 件のうち ${done} 件を下書きにしたか対応不要にしました（${new Date(r.at).toLocaleString("ja-JP")} に head ${r.sha.slice(0, 7)} を調べた結果）。`, `${done} of ${r.findings.length} drafted or dismissed (head ${r.sha.slice(0, 7)}, researched ${new Date(r.at).toLocaleString("en-US")}).`),
       each.length ? `${each.map(([v, n]) => `${v === "nit" ? "nits" : v} ${n}`).join(" · ")}${L("（nits は畳んであります）", " (nits start folded)")}` : null,
       r.models?.length ? `${L("モデル", "Model")}: ${r.models.join(", ")}（effort ${r.effort}）` : null,
+      r.docs?.length ? L(`PR からリンクされた文書: ${r.docs.filter((d) => d.read).length} 件を読みました${r.docs.some((d) => !d.read) ? `（読めなかったもの ${r.docs.filter((d) => !d.read).length} 件）` : ""}`, `Linked documents: ${r.docs.filter((d) => d.read).length} read${r.docs.some((d) => !d.read) ? ` (${r.docs.filter((d) => !d.read).length} could not be read)` : ""}`) : null,
       r.dropped ? L(`差分にない行を指した ${r.dropped} 件は除きました。`, `${r.dropped} pointing at lines outside the diff were left out.`) : null,
       this.showResearch ? L("クリックで差分から隠す", "Click to hide them in the diff") : L("クリックで差分に出す", "Click to show them in the diff"),
       L("Shift+クリックで調べ直す", "Shift+click to research again"),

@@ -24,6 +24,12 @@ const TIMEOUT = 600000;
 export const RESEARCH_MODEL = "opus";
 export const RESEARCH_EFFORT = "high";
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// How much a finding matters, most first: `must` the code behaves wrongly once merged, `should` it
+// behaves but disagrees with what is written or leaves a reader to guess, `nit` nothing goes wrong
+// if it stays. The kind says what sort of place it is; this says which to read first.
+export const SEVERITIES = ["must", "should", "nit"];
+// A finding's place in that order; one researched before there were severities goes last.
+export const severityRank = (f) => { const k = SEVERITIES.indexOf(f.severity); return k < 0 ? SEVERITIES.length : k; };
 
 const SCHEMA = {
   type: "object",
@@ -34,6 +40,7 @@ const SCHEMA = {
         type: "object",
         properties: {
           kind: { type: "string", enum: ["mismatch", "unexplained"] },
+          severity: { type: "string", enum: SEVERITIES },
           path: { type: "string", description: "The file's path in the repository, as in the diff." },
           line: { type: "integer", description: "A line number of the file after the change, on an added or unchanged line shown in the diff." },
           title: { type: "string" },
@@ -41,7 +48,7 @@ const SCHEMA = {
           sources: { type: "array", items: { type: "string" } },
           comment: { type: "string" },
         },
-        required: ["kind", "path", "line", "title", "points", "sources", "comment"],
+        required: ["kind", "severity", "path", "line", "title", "points", "sources", "comment"],
       },
     },
   },
@@ -80,7 +87,13 @@ ${cut}
 
 設計書や ADR は、docs/・adr/・design.md・README・CLAUDE.md などを Grep や Glob で探して読んでください。
 
-書かないもの: 書き方の好み、一般論の助言、コードがしていることの言い換え、すでにコメントや本文で説明されていること。見つからなければ findings は空で構いません。多くても ${MAX_FINDINGS} 件、重要なものから順に。
+書かないもの: 書き方の好み、一般論の助言、コードがしていることの言い換え、すでにコメントや本文で説明されていること。見つからなければ findings は空で構いません。多くても ${MAX_FINDINGS} 件、must・should・nit の順に。
+
+## 重さ（severity）
+種類（mismatch か unexplained か）とは別に、どれだけ重いかを選んでください。
+- must: マージすると動きが誤るもの。結果やデータが間違う、エラーになる、たどり着けない値や経路がある、同じ直しが要る場所の直し漏れ。理由が書かれていないだけに見えても、動きが誤るなら must。
+- should: 動きは正しいが、PR の本文・設計書・コードのコメントと実装が食い違うもの、理由が書かれておらず読み手が誤解しそうなもの。
+- nit: 直さなくても誰も困らないもの。名前、テストの重複や置き場所、リンクや参照の書き漏れ。
 
 ## 各項目の書き方
 - path と line: 差分の中にある、変更後のファイルの行（追加された行か、差分に表示されている変更のない行）の行番号。削除された行は指せません。
@@ -111,7 +124,13 @@ Find two kinds of place in the diff:
 
 Look for design documents and ADRs with Grep and Glob (docs/, adr/, design.md, README, CLAUDE.md, ...).
 
-Leave out: style preferences, general advice, restating what the code does, anything already explained in comments or the description. An empty list is fine. At most ${MAX_FINDINGS}, most important first.
+Leave out: style preferences, general advice, restating what the code does, anything already explained in comments or the description. An empty list is fine. At most ${MAX_FINDINGS}: must first, then should, then nit.
+
+## Severity
+Apart from the kind (mismatch or unexplained), say how much it matters:
+- must: the code behaves wrongly once merged. Wrong results or data, an error, a value or path that can't be reached, a place left unfixed that needed the same fix. If it behaves wrongly it is must, even when it looks like a missing reason.
+- should: it behaves, but disagrees with the description, a design document or a code comment, or its reason is missing where a reader is likely to get it wrong.
+- nit: nobody is hurt if it stays. Names, duplicated or misplaced tests, a missing link or reference.
 
 ## Each finding
 - path and line: a line of the file after the change that the diff shows (added, or unchanged context). Removed lines can't be pointed at.
@@ -129,7 +148,7 @@ Write in English.`);
  * Asks Claude Code about the pull request and keeps the answer for its head commit.
  * `files` are the parsed diff's files: a finding on a line the diff doesn't show is left out
  * (counted in `dropped`). `model` and `effort` are passed to Claude Code as they are. Resolves with
- * `{ sha, at, mine, findings, dropped, cost, model, effort, models }` (`models`: the models that
+ * `{ sha, at, mine, findings, dropped, cost, model, effort, models }`, the findings most severe first (`models`: the models that
  * answered, as Claude Code reports them).
  */
 export async function runResearch(pr, { body, diff, files, mine, model = RESEARCH_MODEL, effort = RESEARCH_EFFORT }) {
@@ -147,7 +166,8 @@ export async function runResearch(pr, { body, diff, files, mine, model = RESEARC
   try { out = JSON.parse(r.stdout); } catch { throw new Error(`Claude Code: ${(r.stderr.trim().split("\n").filter(Boolean).slice(-1)[0] || `exit ${r.code}`).slice(0, 200)}`); }
   if (out.is_error || !out.structured_output) throw new Error(`Claude Code: ${String(out.result ?? out.subtype ?? "no answer").slice(0, 200)}`);
   const shown = (f) => files.some((x) => x.path === f.path && x.rows.some((row) => row.side === "RIGHT" && row.line === f.line));
-  const all = (out.structured_output.findings ?? []).slice(0, MAX_FINDINGS);
+  // Most severe first, in Claude Code's order within each (the sort keeps it).
+  const all = (out.structured_output.findings ?? []).slice(0, MAX_FINDINGS).sort((a, b) => severityRank(a) - severityRank(b));
   const findings = all.filter(shown).map((f, i) => ({ ...f, id: `${i}-${f.path}:${f.line}` }));
   const kept = { sha: pr.sha, at: new Date().toISOString(), mine, findings, dropped: all.length - findings.length, cost: out.total_cost_usd ?? null, model, effort, models: Object.keys(out.modelUsage ?? {}) };
   await fs.writeFile(fileOf(pr), JSON.stringify(kept, null, 2));

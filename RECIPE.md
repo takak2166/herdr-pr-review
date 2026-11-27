@@ -101,17 +101,22 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   Glob only, model and effort from `config.json`'s `research`, default `opus` / `high`) reads the head
   commit's files with the description and the diff, and answers in a JSON schema: findings of kind
   `mismatch` (code against the description, a design document or ADR, or other code) or `unexplained`
-  (a choice whose reason is in no comment and not in the description), each with `path`, `line`,
-  `title`, `points`, `sources` and a draft `comment`. Findings on lines the diff doesn't show are left
-  out. Each shows under its line as a box (red for mismatch, blue for unexplained) with its grounds;
+  (a choice whose reason is in no comment and not in the description), each with a `severity`
+  (`must`: behaves wrongly once merged, even when it looks like a missing reason; `should`: disagrees
+  with what is written or leaves a reader to guess; `nit`: nothing goes wrong if it stays), `path`,
+  `line`, `title`, `points`, `sources` and a draft `comment`. Findings on lines the diff doesn't show
+  are left out; the rest are kept most severe first. Each shows under its line as a box headed
+  `下調べ · must · 食い違い`, red for must, blue for should, gray for nits (by kind, red for mismatch
+  and blue for unexplained, in research from before severities), with its grounds; nits start folded;
   a click opens the comment box with the draft (on your own pull request a note of what to explain,
-  otherwise a question), where `対応不要` dismisses it. A finding with a draft made from it, or
+  otherwise a question, starting with the nits badge for a nit), where `対応不要` dismisses it. A finding with a draft made from it, or
   dismissed, folds to one row (deleting the draft brings it back). The button reads `下調べ n/m`
-  (handled / all): a press shows or hides the findings, Shift+press asks again. The answer is kept
+  (handled / all), led by the musts not yet handled (`下調べ must 2 · 0/7`): a press shows or hides the findings, Shift+press asks again. The answer is kept
   per head commit in `data/pr-review/research/`, with the models that answered.
   `コピー` on a box (only where rows can hold controls: files of up to 1500 rows), `下調べをコピー` in
-  the comment box opened from one, and `全部コピー` in the header copy findings as text: `path:line
-  [kind] title`, its points, its grounds; all of them start with the pull request.
+  the comment box opened from one, and `全部コピー` in the header copy findings as text, most severe
+  first: `path:line [severity · kind] title`, its points, its grounds; all of them start with the
+  pull request.
 - **Slack links** (optional): `data/pr-review/slack-threads.jsonl`, lines of
   `{"pr": "<url>", "thread": "<slack url>"}`, puts a Slack icon and button on those pull requests.
 
@@ -198,5 +203,6 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - A resolved thread shows as one `Resolved` row; a click opens it.
 - `下調べ` on a pull request shows findings under lines of the diff and `下調べ 0/n` in the header;
   a click on one opens the comment box with its draft, and saving folds it (`下調べ 1/n`).
-- `全部コピー` puts every finding on the clipboard, each starting with its `path:line`.
+- `全部コピー` puts every finding on the clipboard, each starting with its `path:line`, musts first.
+- A `nit` finding shows as one folded row; a `must` one is red and counted in the header button.
 - `Ask Claude` → `Review` opens a `… review` tab in the right pane.

@@ -3,6 +3,14 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
+## Unreleased
+
+- Research findings are ranked `must` (the code behaves wrongly once merged), `should` (it disagrees
+  with what is written, or a reader is left to guess) or `nit` (nothing goes wrong if it stays):
+  colored and headed by it, kept and copied most severe first, nits folded at first, the header
+  button puts the musts left first (`下調べ must 2 · 0/7`), and a draft from a nit on someone else's
+  pull request starts with the nits badge.
+
 ## v0.4.0 — 2026-11-26
 
 - Research (`下調べ` in the header): Claude Code reads the pull request and points at code that

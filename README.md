@@ -7,7 +7,7 @@ A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本�
 - Line and multi-line comments and replies, drafted locally and submitted as one review; resolved threads stay folded until clicked
 - A preview of Markdown files: press a block (heading, paragraph, list item, table, quote, code) to comment on its lines; Mermaid diagrams drawn as SVG, enlarged with a click and dragged about
 - A code view of the head commit: go to definition (F12), find uses (Shift+F12; for Go by type with gopls, across gRPC services), blame of the current line, search (Cmd+F or Ctrl+F), text selection, a second column side by side (Cmd+click a file)
-- Research: Claude Code reads the pull request first and points at code that disagrees with the description, a design document or ADR, and at choices whose reason is written nowhere; a click turns one into a line-comment draft (on your own pull request, a note of what to explain); copy one or all, each with its file and line
+- Research: Claude Code reads the pull request first and points at code that disagrees with the description, a design document or ADR, and at choices whose reason is written nowhere, each ranked must, should or nit; a click turns one into a line-comment draft (on your own pull request, a note of what to explain); copy one or all, each with its file and line
 - Ask Claude Code about the pull request in a pane on the right
 - English and Japanese (follows the Mac's language; switchable)
 

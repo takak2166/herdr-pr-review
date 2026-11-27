@@ -17,7 +17,7 @@ import { L, setLang, currentLang, macLang } from "./i18n.js";
 import { languageOf, highlightLine, sliceSegs } from "./highlight.js";
 import { fileAt, definitions, references, goplsReferences, goplsDefinition, blameLine, wordAt } from "./code.js";
 import { previewKind, ensurePreview, togglePreview, previewPane, pickLine } from "./preview.js";
-import { readResearch, runResearch, RESEARCH_MODEL, RESEARCH_EFFORT } from "./research.js";
+import { readResearch, runResearch, severityRank, RESEARCH_MODEL, RESEARCH_EFFORT } from "./research.js";
 
 // The lists are asked for again this often.
 const LIST_MS = 300000;
@@ -211,10 +211,14 @@ function formatComment(text, width) {
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback;
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const stop = (_e, cx) => cx.stop_propagation();
-// A finding of the research (research.js): its color and its name. On your own pull request an
-// unexplained choice is a place to write the reason, on someone else's a question to ask.
-const findingColor = (f, t) => (f.kind === "mismatch" ? t.blocked : t.ansi4);
-const findingLabel = (f, mine) => (f.kind === "mismatch" ? L("食い違い", "Mismatch") : mine ? L("説明を書く場所", "To explain") : L("説明がない", "Unexplained"));
+// A finding of the research (research.js): its color, by how much it matters (by its kind when it was
+// researched before there were severities), and its name: the severity, then the kind. On your own
+// pull request an unexplained choice is a place to write the reason, on someone else's a question to ask.
+const findingColor = (f, t) => (f.severity === "must" ? t.blocked : f.severity === "should" ? t.ansi4 : f.severity === "nit" ? t.muted : f.kind === "mismatch" ? t.blocked : t.ansi4);
+const findingLabel = (f, mine) => [
+  f.severity === "nit" ? "nits" : f.severity,
+  f.kind === "mismatch" ? L("食い違い", "Mismatch") : mine ? L("説明を書く場所", "To explain") : L("説明がない", "Unexplained"),
+].filter(Boolean).join(" · ");
 // Text as GitHub shows it: template comments are left out (and would otherwise swallow what follows them).
 const shownText = (text, max) => text.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, max);
 
@@ -1323,10 +1327,11 @@ export default class PrReview extends View {
         drafts.forEach((d, index) => { if (d.reply === root) comment({ kind: "draft", draft: d, index }, d.body); });
       }
       drafts.forEach((d, index) => { if (!d.reply && d.path === row.path && d.line === row.line && d.side === row.side) comment({ kind: "draft", draft: d, index }, d.body); });
-      // What the research found on this line: whole until a draft is made of it or it is dismissed.
+      // What the research found on this line: whole until a draft is made of it or it is dismissed;
+      // a nit starts folded.
       if (row.side !== "RIGHT") return;
       for (const f of findings.filter((x) => x.path === row.path && x.line === row.line)) {
-        const how = done[f.id] ?? null;
+        const how = done[f.id] ?? (f.severity === "nit" ? "nit" : null);
         if (how && !this.openFindings.has(f.id)) { push({ kind: "finding-folded", finding: f, how }, ROW_H + 8); continue; }
         const text = [`**${f.title}**`, ...f.points.map((p) => `- ${p}`), ...(f.sources.length ? [`> ${L("根拠", "Grounds")}: ${f.sources.join(" · ")}`] : [])].join("\n");
         comment({ kind: "finding", finding: f, how }, text);
@@ -1719,9 +1724,10 @@ export default class PrReview extends View {
 
   // Copies findings as text, each headed by its file and line, to paste elsewhere (Slack, a chat
   // with Claude): what it is, its title, its points and its grounds. Several are preceded by the
-  // pull request; a finding drafted or dismissed says so.
+  // pull request, and go most severe first; a finding drafted or dismissed says so.
   copyFindings(list, cx) {
     if (!list.length) return;
+    list = [...list].sort((a, b) => severityRank(a) - severityRank(b));
     const done = this.findingsDone();
     const one = (f) => [
       `${f.path}:${f.line} [${findingLabel(f, this.research?.mine)}]${done[f.id] ? ` (${done[f.id] === "drafted" ? L("下書きにした", "drafted") : L("対応不要にした", "dismissed")})` : ""} ${f.title}`,
@@ -1746,7 +1752,9 @@ export default class PrReview extends View {
   startFinding(f) {
     this.composeNote = null;
     this.compose = { path: f.path, line: f.line, side: "RIGHT", index: null, reply: null, to: null, startLine: null, finding: f.id };
-    this.editor.set_value(f.comment);
+    // A nit to someone else starts with the nits badge, as the label chips below would put it.
+    const nits = f.severity === "nit" && !this.research?.mine && !LABEL.test(f.comment);
+    this.editor.set_value(nits ? `${TAGS.find((x) => x.id === "nits").badge} ${f.comment}` : f.comment);
     this.editor.focus();
   }
 
@@ -1986,16 +1994,20 @@ export default class PrReview extends View {
       return button("b-research", L("下調べ", "Research"), `${L(`Claude Code に PR を読ませて、${what}を差分に挙げる。挙がったものはクリックで行コメントの下書きにできます。`, `Have Claude Code read the pull request and point out ${what} in the diff. Click one to make it a line-comment draft.`)}\n${L("モデル", "Model")}: ${this.config?.research?.model ?? RESEARCH_MODEL}（effort ${this.config?.research?.effort ?? RESEARCH_EFFORT}）${this.researchError ? `\n\n${this.researchError}` : ""}`,
         false, (_e, cx) => { this.startResearch(cx); cx.notify(); });
     }
-    const done = Object.keys(this.findingsDone()).length;
+    const handled = this.findingsDone(), done = Object.keys(handled).length;
+    // The musts not yet drafted or dismissed, put first on the button; how many of each, in the tip.
+    const mustLeft = r.findings.filter((f) => f.severity === "must" && !handled[f.id]).length;
+    const each = ["must", "should", "nit"].map((v) => [v, r.findings.filter((f) => f.severity === v).length]).filter(([, n]) => n);
     const tip = [
       L(`${r.findings.length} 件のうち ${done} 件を下書きにしたか対応不要にしました（${new Date(r.at).toLocaleString("ja-JP")} に head ${r.sha.slice(0, 7)} を調べた結果）。`, `${done} of ${r.findings.length} drafted or dismissed (head ${r.sha.slice(0, 7)}, researched ${new Date(r.at).toLocaleString("en-US")}).`),
+      each.length ? `${each.map(([v, n]) => `${v === "nit" ? "nits" : v} ${n}`).join(" · ")}${L("（nits は畳んであります）", " (nits start folded)")}` : null,
       r.models?.length ? `${L("モデル", "Model")}: ${r.models.join(", ")}（effort ${r.effort}）` : null,
       r.dropped ? L(`差分にない行を指した ${r.dropped} 件は除きました。`, `${r.dropped} pointing at lines outside the diff were left out.`) : null,
       this.showResearch ? L("クリックで差分から隠す", "Click to hide them in the diff") : L("クリックで差分に出す", "Click to show them in the diff"),
       L("Shift+クリックで調べ直す", "Shift+click to research again"),
       this.researchError,
     ].filter(Boolean).join("\n");
-    return button("b-research", `${L("下調べ", "Research")} ${done}/${r.findings.length}`, tip, this.showResearch, (e, cx) => {
+    return button("b-research", `${L("下調べ", "Research")}${mustLeft ? ` must ${mustLeft} ·` : ""} ${done}/${r.findings.length}`, tip, this.showResearch, (e, cx) => {
       if (e?.modifiers?.shift) this.startResearch(cx);
       else { this.showResearch = !this.showResearch; save("show-research", this.showResearch); this.rebuild(); }
       cx.notify();
@@ -2128,7 +2140,7 @@ export default class PrReview extends View {
         .child(h_flex().w(this.commentWidth()).flex_none().h_full().px(8).gap(6).items_center().rounded(8).border(1).border_color(t.border).bg(t.surface)
           .text_size(11).text_color(t.muted)
           .child(ico("chevron-right", 12, t.muted))
-          .child(div().flex_none().font_bold().child(row.how === "drafted" ? L("下書きにした", "Drafted") : L("対応不要にした", "Dismissed")))
+          .child(div().flex_none().font_bold().child(row.how === "drafted" ? L("下書きにした", "Drafted") : row.how === "nit" ? L("下調べ · nits", "Research · nits") : L("対応不要にした", "Dismissed")))
           .child(div().flex_1().min_w(0).truncate().child(f.title))
           .child(div().flex_none().text_color(t.dim).child(L("クリックで開く", "click to open"))));
     }

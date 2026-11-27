@@ -12,6 +12,9 @@ with a GitHub release. To update, see [Updating](README.md#updating).
 - On your own pull request, research also lists supplements (`補足`): choices the code and the
   description don't explain but a design document or ADR does. Each comes as a comment ready to post,
   citing the document's section, ranked as a nit and folded with them (`下調べ · nits · 補足`).
+- While F12 or Shift+F12 waits for its answer (gopls can take seconds), the bar over the diff or the
+  code is tinted in the accent color with a line pulsing along its bottom, and a spinner says what is
+  awaited: the definition, the uses, or the file being read.
 
 ## v0.5.0 — 2026-11-27
 

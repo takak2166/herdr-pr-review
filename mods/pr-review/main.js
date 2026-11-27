@@ -240,7 +240,7 @@ const decisionOf = (pr) => ({
 
 // What each column of the code view keeps for itself (the view can show two files side by side).
 // `this.<field>` reads and writes the column in use (`this.colAt`); see init() and inCol().
-const COL_FIELDS = ["code", "codeAt", "codeBusy", "codeNote", "codeScroll", "codePlain", "codeH", "mark", "markAt", "markWord",
+const COL_FIELDS = ["code", "codeAt", "codeBusy", "codeWait", "codeNote", "codeScroll", "codePlain", "codeH", "mark", "markAt", "markWord",
   "candidates", "back", "forward", "findOpen", "findInput", "findHits", "findAt", "findKey"];
 
 export default class PrReview extends View {
@@ -603,7 +603,7 @@ export default class PrReview extends View {
 
   // A column of the code view, empty: its file, place, marks, uses, history and search.
   newCol() {
-    const col = { code: null, codeAt: 0, codeBusy: false, codeNote: null, codeScroll: VirtualListScrollHandle.new(), codePlain: ScrollHandle.new(),
+    const col = { code: null, codeAt: 0, codeBusy: false, codeWait: null, codeNote: null, codeScroll: VirtualListScrollHandle.new(), codePlain: ScrollHandle.new(),
       codeH: null, mark: null, markAt: -1, markWord: null, candidates: null, back: [], forward: [],
       findOpen: false, findHits: [], findAt: -1, findKey: null, findInput: InputState.new({ placeholder: "" }) };
     // Typing in a column's search box searches that column, whichever was in use before.
@@ -768,6 +768,7 @@ export default class PrReview extends View {
     const col = this.cols[this.colAt];
     this.view = "code";
     this.codeBusy = true;
+    this.codeWait = L(`${path.split("/").pop()} を読み込んでいます…`, `Reading ${path.split("/").pop()}…`);
     this.codeNote = null;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -864,6 +865,7 @@ export default class PrReview extends View {
     const col = this.cols[this.colAt];
     const say = (text) => { if (inDiff) notify({ title: L("定義へ移れません", "Can't go to the definition"), body: text, level: "info" }); else col.codeNote = text; };
     this.codeBusy = true;
+    this.codeWait = /\.go$/.test(fromPath) ? L(`「${name}」の定義を gopls で探しています…`, `Finding where ${name} is defined, with gopls…`) : L(`「${name}」の定義を探しています…`, `Finding where ${name} is defined…`);
     this.codeNote = null;
     cx.notify();
     const word = this.markWord?.name === name ? this.markWord : null;
@@ -944,6 +946,7 @@ export default class PrReview extends View {
       this.openCode(list[at].path, cx, { line: list[at].line, name });
     };
     this.codeBusy = true;
+    this.codeWait = L(`「${name}」の使用箇所を探しています…`, `Finding where ${name} is used…`);
     this.codeNote = null;
     cx.notify();
     const nth = this.markWord?.name === name ? this.markWord.nth ?? 1 : 1;
@@ -961,7 +964,7 @@ export default class PrReview extends View {
           if (others.length) { show(others, firstOf(others), { total: total - (refs.length - others.length), checking: byType }); opened = true; }
           else if (!byType) say(refs.length ? L(`「${name}」が使われているのは、ここだけです。`, `${name} is used only here.`) : L(`「${name}」が使われている箇所が、このリポジトリの中に見つかりません。`, `${name} is not used anywhere in this repository.`));
         }
-        if (!opened) this.codeBusy = byType;
+        if (!opened) { this.codeBusy = byType; this.codeWait = L(`「${name}」の使用箇所を gopls で確かめています…`, `Checking the uses of ${name} with gopls…`); }
       });
       cx.notify();
       if (!byType) return;
@@ -1043,7 +1046,7 @@ export default class PrReview extends View {
     return v_flex().id(`code-col-${k}`).flex_1().min_w(0).min_h(0)
       // The press reaches here after the line under it has seen it, and before any click.
       .on_mouse_down("left", () => this.useCol(k))
-      .child(h_flex().h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).text_size(12)
+      .child(this.busyLook(h_flex().h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).text_size(12)
         // With two columns, the one in use is underlined in the accent color: keys act on it.
         .when(two && this.colAt === k, (el) => el.border_b(2).border_color(t.accent))
         .child(button("code-back", L("戻る", "Back"), L("ジャンプする前の場所へ（Ctrl+-）", "Where you were before the jump (Ctrl+-)"), this.back.length > 0, (_e, cx) => { this.goBack(cx); cx.notify(); }))
@@ -1051,9 +1054,10 @@ export default class PrReview extends View {
         .child(div().flex_1().min_w(0).truncate().px(6).font_family(settings().font_family ?? "JetBrains Mono").text_color(t.foreground).child(c?.path ?? ""))
         .when(Boolean(this.mark), (el) => el.child(h_flex().flex_none().h(22).px(8).items_center().rounded(R.sm).bg(t.accent + "26").font_family(settings().font_family ?? "JetBrains Mono").text_color(t.foreground).child(this.mark)))
         .child(this.selChip(t))
-        .when(!this.selRange(), (el) => el.child(div().flex_none().pr(8).text_color(t.dim).child(this.codeBusy ? L("読み込み中…", "Loading…") : (c?.rows.length ?? 0) <= PLAIN_MAX ? L("名前をクリックして F12 で定義へ・ドラッグで文字を選択", "Click a name, F12 for its definition · drag to select text") : L("名前をクリックして F12 で定義へ", "Click a name, F12 for its definition"))))
+        .when(this.codeBusy, (el) => el.child(this.busyChip(t)))
+        .when(!this.codeBusy && !this.selRange(), (el) => el.child(div().flex_none().pr(8).text_color(t.dim).child((c?.rows.length ?? 0) <= PLAIN_MAX ? L("名前をクリックして F12 で定義へ・ドラッグで文字を選択", "Click a name, F12 for its definition · drag to select text") : L("名前をクリックして F12 で定義へ", "Click a name, F12 for its definition"))))
         .when(k === 1, (el) => el.child(div().id("code-col-close").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4).cursor_pointer().hover((s) => s.bg(t.hover))
-          .tooltip(L("右の列を閉じる", "Close the right column")).on_click((_e, cx) => { cx.stop_propagation(); this.closeSide(); cx.notify(); }).child(ico("x", 12, t.muted)))))
+          .tooltip(L("右の列を閉じる", "Close the right column")).on_click((_e, cx) => { cx.stop_propagation(); this.closeSide(); cx.notify(); }).child(ico("x", 12, t.muted)))), t))
       .when(this.findOpen, (el) => el.child(this.findBar(t, col)))
       .when(Boolean(this.candidates), (el) => el.child(h_flex().id("code-candidates").h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).overflow_x_scrollbar().text_size(11)
         .child(div().flex_none().pr(4).text_color(t.muted).child(this.candidates.kind === "refs"
@@ -2213,6 +2217,21 @@ export default class PrReview extends View {
             .child(sp.text)) : [div().child(" ")]))));
   }
 
+  // While F12 or Shift+F12 waits for its answer (gopls can take seconds on a large module) or a file
+  // is being read, the bar over the diff or the code says so: tinted in the accent color, with a line
+  // pulsing along its bottom and a spinner saying what is awaited (busyChip).
+  busyLook(bar, t) {
+    if (!this.codeBusy) return bar;
+    return bar.relative().bg(t.accent + "1f")
+      .child(div().absolute().left(0).right(0).bottom(0).h(2).bg(t.accent).loop("opacity", { from: 0.15, to: 1, period: 900 }));
+  }
+
+  busyChip(t) {
+    return h_flex().flex_none().max_w(360).gap(6).items_center().pr(8).text_color(t.foreground)
+      .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.accent).spin(900))
+      .child(div().min_w(0).truncate().child(this.codeWait ?? L("読み込み中…", "Loading…")));
+  }
+
   // The bar over the diff: the shown file, and what can be done with it.
   fileBar(t) {
     const f = this.current();
@@ -2220,7 +2239,7 @@ export default class PrReview extends View {
     const button = (id, label, tip, on, onClick) => div().id(id).flex_none().px(8).h(22).flex().items_center().rounded(4).text_size(12)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip(tip).on_click(onClick).child(label);
-    return h_flex().h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).text_size(12)
+    return this.busyLook(h_flex().h(30).flex_none().px(8).gap(4).items_center().border_b(1).border_color(t.border).text_size(12)
       .child(button("file-prev", L("前", "Prev"), L("前のファイル", "Previous file"), false, (_e, cx) => { this.stepFile(-1); cx.notify(); }))
       .child(button("file-next", L("次", "Next"), L("次のファイル", "Next file"), false, (_e, cx) => { this.stepFile(1); cx.notify(); }))
       .child(div().flex_1().min_w(0).truncate().px(6).font_family(settings().font_family ?? "JetBrains Mono").text_color(viewed ? t.muted : t.foreground).child(f.path))
@@ -2239,7 +2258,8 @@ export default class PrReview extends View {
           .child(div().id("mark-clear").w(20).h(20).flex().items_center().justify_center().rounded(R.sm).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(L("ハイライトを消す", "Clear the highlight"))
             .on_click((_e, cx) => { this.mark = null; cx.notify(); }).child(ico("x", 12, t.muted))));
       })
-      .when(this.view !== "preview" && !this.mark && !this.selRange(), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.rows.length <= PLAIN_MAX ? L("名前をクリックでハイライト・ドラッグで文字を選択・+ でコメント（ドラッグで複数行）", "Click a name to highlight · drag to select · + to comment (drag for several lines)") : L("名前をクリックでハイライト・行頭の + でコメント", "Click a name to highlight · + at a line's start to comment"))))
+      .when(this.codeBusy, (el) => el.child(this.busyChip(t)))
+      .when(!this.codeBusy && this.view !== "preview" && !this.mark && !this.selRange(), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.rows.length <= PLAIN_MAX ? L("名前をクリックでハイライト・ドラッグで文字を選択・+ でコメント（ドラッグで複数行）", "Click a name to highlight · drag to select · + to comment (drag for several lines)") : L("名前をクリックでハイライト・行頭の + でコメント", "Click a name to highlight · + at a line's start to comment"))))
       .child(this.selChip(t))
       .when(this.view !== "preview" && this.oneSided(f), (el) => el.child(div().id("file-split-off").flex_none().px(8).h(22).flex().items_center().text_size(12).text_color(t.dim)
         .tooltip(L(`${f.added ? "追加されたファイル" : f.deleted ? "削除されたファイル" : f.del === 0 ? "追加だけの変更" : "削除だけの変更"}は片側しかないので、1 列で表示します。`, `${f.added ? "An added file" : f.deleted ? "A deleted file" : f.del === 0 ? "A change with only additions" : "A change with only deletions"} has one side, so it is shown unified.`)).child(L("1 列で表示", "Unified"))))
@@ -2249,7 +2269,7 @@ export default class PrReview extends View {
         .tooltip(viewed ? L("確認済みの印を外す（GitHub の Viewed）", "Unmark as viewed (GitHub's Viewed)") : L("確認済みにして、次のファイルへ（GitHub の Viewed）", "Mark as viewed and go to the next file (GitHub's Viewed)"))
         .on_click((_e, cx) => { this.toggleViewed(f, cx); cx.notify(); })
         .child(div().size(11).rounded(4).border(1).border_color(viewed ? t.ansi2 : t.input).when(viewed, (el) => el.bg(t.ansi2)))
-        .child(div().text_color(viewed ? t.ansi2 : t.muted).child(L("確認済み", "Viewed"))));
+        .child(div().text_color(viewed ? t.ansi2 : t.muted).child(L("確認済み", "Viewed")))), t);
   }
 
   // While text is selected: how much, and a button that copies it (as Cmd+C does).

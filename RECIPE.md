@@ -84,7 +84,10 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
   Ctrl+F) searches the file shown, Enter / Shift+Enter, Esc. Jumps put the line in the middle.
   Cmd+click a file in the tree opens it in a second column on the right (an `x` in its header closes
   it). Each column keeps its own file, history, mark, selection and search; F12 and Shift+F12 open
-  in the column where they were pressed.
+  in the column where they were pressed. While a lookup or a file read is pending, the bar over the
+  diff or the code is tinted (the accent at alpha `1f`), a 2px accent line along its bottom pulses
+  (`loop("opacity")`, 900 ms), and a spinner says what is awaited (`「name」の定義を gopls で探しています…`,
+  the uses, the file being read) in place of the hint.
 - **Preview** (Markdown files only; `Preview` in the file bar, or the command `pr-review.preview`):
   the file at the head commit, drawn block by block (headings, paragraphs, list items with their
   nesting, tables, quotes, code fences, front matter as YAML). Pressing a block opens the comment box
@@ -211,6 +214,8 @@ UI text, the terminal font for code. Radii 4 / 8, a 4px grid, line icons.
 - Hovering a diff line shows its `+`; a drag from a `+` across lines opens a range comment.
 - A draft sent with `Submit review` appears on GitHub as one review.
 - F12 on a marked name opens its definition; Ctrl+- comes back to the diff.
+- F12 on a Go name tints the bar and shows `「name」の定義を gopls で探しています…` until the definition
+  opens, then the bar is plain again.
 - Shift+F12 on a Go RPC handler lists the calls from other services with `gRPC ←`.
 - Cmd+F marks matches and Enter steps through them.
 - F12 on `u.x()` in Go opens the method of `u`'s type, not another `x` of the same name.

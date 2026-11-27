@@ -3,7 +3,7 @@
 Versions follow [Semantic Versioning](https://semver.org/). Each version is a git tag (`v0.1.0`)
 with a GitHub release. To update, see [Updating](README.md#updating).
 
-## Unreleased
+## v0.5.0 — 2026-11-27
 
 - Research findings are ranked `must` (the code behaves wrongly once merged), `should` (it disagrees
   with what is written, or a reader is left to guess) or `nit` (nothing goes wrong if it stays):

@@ -18,7 +18,7 @@ A [Herdr](https://herdr.dev) layout for reviewing GitHub pull requests. [日本�
 Ask Herdr's agent, naming a version (a git tag; see [CHANGELOG.md](CHANGELOG.md)):
 
 ```
-Add the layout from github.com/takak2166/herdr-pr-review at tag v0.4.0
+Add the layout from github.com/takak2166/herdr-pr-review at tag v0.5.0
 ```
 
 It copies the files and merges the keys as Herdr's guide says. By hand: copy `layouts/pr-review.json` and `mods/pr-review/` from the tag to the same places under `~/.config/herdr-app/`, merge `keys.json` into yours, then switch with `ctrl-shift-l` (or `layout.switch {name: "pr-review"}`).
@@ -30,7 +30,7 @@ Herdr has no package manager: a layout is files in `~/.config/herdr-app/`, and n
 Herdr's guide tells an agent never to overwrite a name that is taken, so asking it to "add" the layout again makes a second copy (`pr-review-2`). Say that it is an update instead:
 
 ```
-Update the herdr-pr-review layout to tag v0.4.0 from github.com/takak2166/herdr-pr-review.
+Update the herdr-pr-review layout to tag v0.5.0 from github.com/takak2166/herdr-pr-review.
 Replace mods/pr-review/ and layouts/pr-review.json in place (overwriting is fine),
 and merge any new keys from its keys.json.
 ```
